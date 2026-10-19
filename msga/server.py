@@ -256,6 +256,15 @@ def open_folder(path):
         subprocess.Popen(["xdg-open", str(path)])
 
 
+class QuietServer(ThreadingHTTPServer):
+    """النافذة أحيانًا تقطع الاتصال في نص الرد (طبيعي): ما نطبع أخطاء الاتصال المقطوع."""
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionError, BrokenPipeError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "MSGA"
 
@@ -587,7 +596,7 @@ def make_server(mode="browser"):
     for port in range(BASE_PORT, BASE_PORT + 20):
         STATE.port = port
         try:
-            httpd = ThreadingHTTPServer((HOST, port), Handler)
+            httpd = QuietServer((HOST, port), Handler)
             httpd.daemon_threads = True
             STATE.httpd = httpd
             if not STATE.items:
