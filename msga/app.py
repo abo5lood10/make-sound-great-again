@@ -1,6 +1,11 @@
-"""نقطة تشغيل البرنامج: نافذة مستقلة (GTK+WebKit2 على Linux، وpywebview على ويندوز وماك) أو المتصفح كحل أخير."""
+"""نقطة تشغيل البرنامج.
+
+ويندوز وماك: برنامج بنافذة مستقلة (pywebview) فقط، ما يفتح المتصفح أبدًا (إلا لو طلبت --browser).
+Linux: نافذة مستقلة (GTK + WebKit2)، والمتصفح كحل أخير لو ما فيه نافذة.
+"""
 import argparse
 import json
+import subprocess
 import sys
 import threading
 import time
@@ -10,9 +15,11 @@ import webbrowser
 from . import core, server
 from .version import APP_NAME, VERSION
 
+DESKTOP_ONLY = core.IS_WIN or core.IS_MAC  # هذي الأنظمة: نافذة برنامج، بدون متصفح
+
 
 def already_running():
-    """لو فيه نسخة شغّالة، نرجع (رابطها، وضعها) بدل ما نفتح نسخة ثانية."""
+    """لو فيه نسخة شغّالة، نرجع (رابطها، وضعها، منفذها، إصدارها)."""
     for port in range(server.BASE_PORT, server.BASE_PORT + 20):
         try:
             with urllib.request.urlopen(f"http://{server.HOST}:{port}/api/ping", timeout=0.4) as r:
@@ -25,7 +32,7 @@ def already_running():
 
 
 def quit_existing(port):
-    """نسخة قديمة شغّالة بوضع المتصفح: نقفلها عشان تفتح نافذة مستقلة بدالها."""
+    """نسخة قديمة شغّالة (إصدار مختلف أو وضع متصفح): نقفلها عشان تفتح الجديدة بدالها."""
     try:
         req = urllib.request.Request(f"http://{server.HOST}:{port}/api/quit", data=b"{}", method="POST",
                                      headers={"Content-Type": "application/json"})
@@ -37,6 +44,21 @@ def quit_existing(port):
         if not already_running():
             return True
     return False
+
+
+def show_error(text):
+    """رسالة خطأ بنافذة (النسخة المجمّعة ما لها طرفية، فلازم المستخدم يشوف السبب)."""
+    print(text, file=sys.stderr, flush=True)
+    try:
+        if core.IS_WIN:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, text, APP_NAME, 0x10)
+        elif core.IS_MAC:
+            safe = text.replace("\\", " ").replace('"', "'")
+            subprocess.run(["osascript", "-e", f'display dialog "{safe}" with title "{APP_NAME}" '
+                            'buttons {"OK"} default button "OK" with icon stop'], timeout=120)
+    except Exception:
+        pass
 
 
 def pick_window_runner():
@@ -58,24 +80,60 @@ def pick_window_runner():
     return run
 
 
+def selftest():
+    """يفتح النافذة فعليًا، ينتظر تحميل الصفحة، ثم يقفل. للفحص الآلي على ويندوز وماك (exit 0 = نجح)."""
+    import webview
+    httpd = server.make_server("window")
+    url = f"http://{server.HOST}:{server.STATE.port}"
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    win = webview.create_window(APP_NAME, url, width=720, height=900)
+    ok = []
+
+    def probe():
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            try:
+                if win.evaluate_js("document.getElementById('go') !== null && document.title") == APP_NAME:
+                    ok.append(True)
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        win.destroy()
+
+    webview.start(probe)
+    httpd.shutdown()
+    print("window selftest:", "OK" if ok else "FAILED", flush=True)
+    sys.exit(0 if ok else 1)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="run.py", description=APP_NAME)
     ap.add_argument("--browser", action="store_true", help="افتح في المتصفح بدل نافذة مستقلة")
     ap.add_argument("--no-open", action="store_true", help="شغّل الخادم فقط بدون فتح أي شي")
+    ap.add_argument("--selftest", action="store_true", help="فحص آلي: يفتح النافذة ويقفلها")
     args = ap.parse_args(argv)
 
-    window_mode = False
+    if args.selftest:
+        selftest()
+        return
+
     runner = None
     if not args.browser and not args.no_open:
         runner = pick_window_runner()
-        window_mode = runner is not None
+        if runner is None and DESKTOP_ONLY:
+            show_error("The app window couldn't start: the 'pywebview' package is missing.\n"
+                       "Fix: run  pip install pywebview  and start the app again.\n"
+                       "(على ويندوز يلزم أيضًا Microsoft Edge WebView2 Runtime)")
+            sys.exit(1)
+    window_mode = runner is not None
 
     existing = already_running()
     stale = existing and (existing[3] != VERSION or (window_mode and existing[1] == "browser"))
     if stale and quit_existing(existing[2]):
-        existing = None  # نسخة قديمة (إصدار مختلف أو وضع متصفح): قفلناها ونفتح الجديدة
+        existing = None  # نسخة قديمة: قفلناها ونفتح الجديدة
     if existing:
-        if not args.no_open:
+        if args.browser:
             webbrowser.open(existing[0])
         print(f"{APP_NAME} is already running: {existing[0]}")
         return
@@ -91,7 +149,11 @@ def main(argv=None):
             runner(url)
             httpd.shutdown()
             return
-        except Exception as e:  # ما اشتغلت النافذة: نكمل بالمتصفح
+        except Exception as e:
+            if DESKTOP_ONLY:  # ويندوز / ماك: ما نرجع للمتصفح، نوضّح المشكلة
+                httpd.shutdown()
+                show_error(f"The app window couldn't start: {e}")
+                sys.exit(1)
             print(f"(window unavailable: {e}) falling back to the browser", flush=True)
             server.STATE.mode = "browser"
             webbrowser.open(url)

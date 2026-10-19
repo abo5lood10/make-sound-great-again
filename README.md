@@ -32,7 +32,7 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 
 ## Install
 
-You need **Python 3.8+** and **ffmpeg** (with ffprobe), plus `yt-dlp` (installed for you by the start scripts).
+You need **Python 3.8+** and **ffmpeg** (with ffprobe). `yt-dlp` and the window library are installed for you by the start scripts.
 
 | OS | ffmpeg | Start |
 |---|---|---|
@@ -47,7 +47,7 @@ pip install -r requirements.txt
 python run.py
 ```
 
-The app opens in **its own window** (no browser): on Windows/macOS through `pywebview` (installed by the start scripts, or `pip install -r requirements-window.txt`), on Linux through the system's GTK + WebKit2 (`sudo apt install gir1.2-webkit2-4.0` if missing). If no window backend is available it falls back to your browser; force that with `python run.py --browser`.
+The app is a **real desktop app with its own window**, never a browser tab. On Windows/macOS the window comes from `pywebview` (installed by `pip install -r requirements.txt`; Windows also needs the Edge WebView2 runtime, already present on Windows 10/11), on Linux from the system's GTK + WebKit2 (`sudo apt install gir1.2-webkit2-4.0` if missing). On Windows/macOS it never falls back to the browser: if the window can't start you get an error message saying why. (`python run.py --browser` forces browser mode if you ever want it.)
 
 > macOS tip: if Python (from python.org) reports certificate errors, run "Install Certificates.command" once, or `pip install certifi`.
 

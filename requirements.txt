@@ -1,2 +1,4 @@
-# المطلوب الوحيد (محرك التنزيل). ffmpeg يُثبَّت من النظام: winget / brew / apt
+# محرك التنزيل. ffmpeg يُثبَّت من النظام: winget / brew / apt
 yt-dlp
+# ويندوز وماك: نافذة البرنامج (بدون متصفح). على Linux ما تحتاجها (يستخدم GTK + WebKit2 من النظام)
+pywebview; sys_platform != "linux"

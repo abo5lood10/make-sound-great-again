@@ -39,3 +39,8 @@ jobs:
           python -m yt_dlp --version
       - name: Run tests
         run: python -m unittest discover -s tests -v
+
+      - name: Open the real app window (Windows / macOS only)
+        if: runner.os != 'Linux'
+        continue-on-error: true   # معلومات فقط: بيئة CI ممكن ما فيها شاشة كاملة
+        run: python run.py --selftest
