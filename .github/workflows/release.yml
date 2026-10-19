@@ -80,7 +80,14 @@ jobs:
           curl -fs -X POST -d '{}' http://127.0.0.1:8765/api/quit || true
           sleep 2
           # فحص النافذة الحقيقية من داخل النسخة المجمّعة (exit code فقط، لأن النسخة بدون طرفية)
-          timeout 150 "$BIN" --selftest || { RC=$?; echo "window selftest FAILED (exit $RC)"; cat "$MSGA_HOME/app.log" 2>/dev/null; exit 1; }
+          python - "$BIN" <<'PY' || { echo "window selftest FAILED"; cat "$MSGA_HOME/app.log" 2>/dev/null; exit 1; }
+          import subprocess, sys
+          try:
+              sys.exit(subprocess.run([sys.argv[1], "--selftest"], timeout=150).returncode)
+          except subprocess.TimeoutExpired:
+              print("selftest timed out")
+              sys.exit(1)
+          PY
           echo "window selftest OK"
       - name: Package
         shell: bash
