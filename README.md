@@ -21,9 +21,9 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 
 ## Light on your computer
 
-- Pure Python standard library: no heavy GUI toolkit, no Electron.
+- Pure Python standard library for the app itself: no heavy GUI toolkit, no Electron (the window reuses the webview already in your OS).
 - The heavy work runs at **low CPU priority** by default (Settings → Light mode).
-- Polls rarely while idle, and in browser mode it **quits by itself** when the page is closed.
+- Polls rarely while idle, closing the window quits the app, and in browser mode it **quits by itself** when the page is closed.
 
 ## Install
 
@@ -42,7 +42,7 @@ pip install -r requirements.txt
 python run.py
 ```
 
-Want a standalone window instead of the browser tab? `pip install -r requirements-window.txt` (pywebview). Force the browser with `python run.py --browser`.
+The app opens in **its own window** (no browser): on Windows/macOS through `pywebview` (installed by the start scripts, or `pip install -r requirements-window.txt`), on Linux through the system's GTK + WebKit2 (`sudo apt install gir1.2-webkit2-4.0` if missing). If no window backend is available it falls back to your browser; force that with `python run.py --browser`.
 
 > macOS tip: if Python (from python.org) reports certificate errors, run "Install Certificates.command" once, or `pip install certifi`.
 

@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -170,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/files/"):
             self._serve_file(Path(core.load_config()["out"]), unquote(path[7:]), cache=False)
         elif path == "/api/ping":
-            self._json({"ok": True, "app": APP_NAME})
+            self._json({"ok": True, "app": APP_NAME, "mode": STATE.mode})
         elif path == "/api/messages":
             self._json(core.MESSAGES)
         elif path == "/api/state":
@@ -214,6 +215,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/open":
             open_folder(core.load_config()["out"])
             self._json({"ok": True})
+        elif path == "/api/open_repo":
+            url = updater.repo_url()
+            if url:
+                webbrowser.open(url)
+            self._json({"ok": bool(url)})
         elif path == "/api/update/check":
             self._json(updater.check())
         elif path == "/api/update/apply":

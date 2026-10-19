@@ -60,6 +60,12 @@
       <button id="openFolder" class="link" data-i18n="open_folder"></button>
     </span>
   </div>
+  <div id="cleanBox" class="card pad inline" hidden>
+    <span data-i18n="clean_prompt"></span>
+    <input type="number" id="cleanDays" value="30" min="0" max="3650" class="num">
+    <button id="cleanGo" class="tint" data-i18n="delete"></button>
+    <button id="cleanCancel" class="link" data-i18n="cancel"></button>
+  </div>
   <div id="empty" class="empty"><svg viewBox="0 0 24 24" width="44" height="44" fill="currentColor"><path d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h2v-8H5v-1a7 7 0 0 1 14 0v1h-2v8h2a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/></svg><div data-i18n="empty"></div></div>
   <div id="list"></div>
   <p id="outInfo" class="sub path"></p>
@@ -88,7 +94,7 @@
 
   <section class="card group">
     <div class="row"><div><span data-i18n="about"></span><div class="sub" id="aboutLine"></div></div>
-      <a id="repoLink" class="link-a" target="_blank" rel="noopener">GitHub</a></div>
+      <button id="repoLink" class="link">GitHub ↗</button></div>
     <div class="row"><div><span data-i18n="updates"></span><div class="sub" id="updStatus"></div></div>
       <button id="updCheck" class="tint" data-i18n="check_updates"></button></div>
     <div class="row" id="updRow" hidden><div><span id="updTitle"></span></div>

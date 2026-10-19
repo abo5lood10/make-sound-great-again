@@ -19,7 +19,8 @@ const T = {
   results: ["النتائج", "Results"],
   open_folder: ["فتح مجلد الحفظ", "Open output folder"],
   clean_old: ["حذف القديم…", "Delete old…"],
-  clean_prompt: ["احذف ملفات مجلد الحفظ الأقدم من كم يوم؟", "Delete files in the output folder older than how many days?"],
+  clean_prompt: ["احذف ملفات مجلد الحفظ الأقدم من (يوم):", "Delete files in the output folder older than (days):"],
+  delete: ["احذف", "Delete"], cancel: ["إلغاء", "Cancel"],
   deleted: ["تم حذف {n} ملف", "Deleted {n} file(s)"],
   clear_list: ["مسح القائمة", "Clear list"],
   empty: ["ما فيه أغاني بعد", "No songs yet"],
@@ -33,7 +34,7 @@ const T = {
   loudness: ["مستوى الصوت", "Loudness"], peak: ["الذروة", "Peak"],
   original: ["الأصلي", "Original"], enhanced: ["المحسّن", "Enhanced"],
   fair_ab: ["المقارنة بنفس مستوى الصوت", "Compared at equal loudness"],
-  download: ["تحميل", "Download"],
+  show_folder: ["إظهار في المجلد", "Show in folder"],
   waiting: ["بالانتظار", "Waiting"], failed: ["فشل", "Failed"], reading_playlist: ["قراءة القائمة", "Reading playlist"],
   settings: ["الإعدادات", "Settings"], back: ["رجوع", "Back"],
   language: ["اللغة", "Language"], appearance: ["المظهر", "Appearance"],
@@ -167,10 +168,12 @@ $("go").onclick = async () => {
 };
 $("clearList").onclick = async () => { await api("/api/clear", {}); poll(); };
 $("openFolder").onclick = () => api("/api/open", {});
-$("cleanOld").onclick = async () => {
-  const d = prompt(t("clean_prompt"), "30");
-  if (d === null) return;
-  const r = await api("/api/clean", { days: +d });
+// نافذة داخلية بدل prompt() (ما تشتغل في النوافذ المستقلة)
+$("cleanOld").onclick = () => { $("cleanBox").hidden = !$("cleanBox").hidden; };
+$("cleanCancel").onclick = () => { $("cleanBox").hidden = true; };
+$("cleanGo").onclick = async () => {
+  const r = await api("/api/clean", { days: Math.max(0, +$("cleanDays").value || 0) });
+  $("cleanBox").hidden = true;
   $("outInfo").textContent = t("deleted", { n: r.deleted });
 };
 
@@ -207,11 +210,11 @@ function renderResult(c) {
   const src = r.codec + (r.bitrate_kbps ? " " + r.bitrate_kbps + "kbps" : "");
   c.res.innerHTML = `<div class="meta"></div>
     ${r.original_url ? `<div class="ab"><button class="tint" data-w="o"></button><button class="tint" data-w="e"></button><span class="sub"></span></div>` : ""}
-    <audio controls preload="metadata"></audio><a class="dl" download></a>`;
+    <audio controls preload="metadata"></audio><button class="link dl"></button>`;
   c.res.querySelector(".meta").textContent =
     `${msg(r.reason_key, r.reason_params)}\n${t("source")}: ${src}  ·  ${t("preset_used")}: ${used}\n` +
     `${t("loudness")}: ${f1(r.lufs_before)} ← ${f1(r.lufs_after)} LUFS  ·  ${t("peak")}: ${f1(r.tp_before)} ← ${f1(r.tp_after)} dBTP`;
-  const dl = c.res.querySelector(".dl"); dl.href = r.output_url; dl.textContent = `⬇ ${t("download")} ${r.output_name}`;
+  const dl = c.res.querySelector(".dl"); dl.textContent = `📂 ${t("show_folder")}`; dl.onclick = () => api("/api/open", {});
   const audio = c.audio = c.res.querySelector("audio");
   const known = [r.lufs_before, r.lufs_after].filter(v => v !== null && v !== undefined);
   const target = known.length ? Math.min(...known) : null;
@@ -266,6 +269,7 @@ function show(view) {
   window.scrollTo(0, 0);
   if (view === "settings") loadSettings();
 }
+$("repoLink").onclick = () => api("/api/open_repo", {});
 $("gear").onclick = () => show("settings");
 $("back").onclick = () => show("main");
 
@@ -273,7 +277,7 @@ function fillAbout() {
   if (!S.state) return;
   $("aboutLine").textContent = `${S.state.app} · ${t("version")} ${S.state.version}`;
   $("fontStatus").textContent = S.state.thmanyah ? t("font_ok") : t("font_missing");
-  const link = $("repoLink"); link.hidden = !S.state.repo_url; if (S.state.repo_url) link.href = S.state.repo_url;
+  $("repoLink").hidden = !S.state.repo_url;
   $("quit").hidden = S.state.mode !== "browser";
 }
 async function loadSettings() {
