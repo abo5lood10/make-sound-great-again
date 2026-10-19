@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Make Sound Great Again</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <button id="gear" class="icon-btn" aria-label="Settings">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+  </button>
+</header>
+
+<!-- ===== الصفحة الرئيسية ===== -->
+<main id="main" class="view">
+  <div class="brand">
+    <img src="/static/icon.svg" alt="" width="56" height="56">
+    <h1 class="wordmark" dir="ltr">Make Sound Great Again</h1>
+    <p class="sub" data-i18n="subtitle"></p>
+  </div>
+
+  <div id="banner" class="notice" hidden></div>
+
+  <section class="card pad">
+    <textarea id="urls" rows="3" dir="ltr" spellcheck="false" data-i18n-ph="url_placeholder"></textarea>
+  </section>
+
+  <div id="drop" class="drop" tabindex="0" role="button">
+    <svg viewBox="0 0 24 24" width="34" height="34" fill="currentColor"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+    <div id="dropTitle"></div>
+    <div id="dropSub" class="sub"></div>
+  </div>
+  <input type="file" id="files" multiple accept="audio/*,video/*" hidden>
+  <button id="clearFiles" class="link" hidden></button>
+
+  <section class="card group">
+    <div class="row"><span data-i18n="preset"></span>
+      <select id="preset"></select></div>
+    <div class="row"><span data-i18n="format"></span>
+      <div class="seg" id="format"><button data-v="flac">FLAC</button><button data-v="mp3">MP3 320</button></div></div>
+    <div class="row"><span data-i18n="jobs"></span>
+      <div class="seg stepper"><button id="jobsMinus" aria-label="-">−</button><span id="jobsVal">1</span><button id="jobsPlus" aria-label="+">+</button></div></div>
+    <div class="row"><span data-i18n="playlist"></span>
+      <label class="switch"><input type="checkbox" id="playlist"><i></i></label></div>
+  </section>
+  <button id="saveDefaults" class="link" data-i18n="save_defaults"></button>
+
+  <button id="go" class="primary" data-i18n="go"></button>
+  <div id="formErr" class="err"></div>
+
+  <div class="results-head">
+    <h2 data-i18n="results"></h2>
+    <span class="links">
+      <button id="clearList" class="link" data-i18n="clear_list"></button>
+      <button id="cleanOld" class="link" data-i18n="clean_old"></button>
+      <button id="openFolder" class="link" data-i18n="open_folder"></button>
+    </span>
+  </div>
+  <div id="empty" class="empty"><svg viewBox="0 0 24 24" width="44" height="44" fill="currentColor"><path d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h2v-8H5v-1a7 7 0 0 1 14 0v1h-2v8h2a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/></svg><div data-i18n="empty"></div></div>
+  <div id="list"></div>
+  <p id="outInfo" class="sub path"></p>
+</main>
+
+<!-- ===== الإعدادات ===== -->
+<main id="settings" class="view" hidden>
+  <button id="back" class="link back"></button>
+  <h1 class="page-title" data-i18n="settings"></h1>
+
+  <section class="card group">
+    <div class="row"><span data-i18n="language"></span>
+      <div class="seg" id="langSeg"><button data-v="ar">العربية</button><button data-v="en">English</button></div></div>
+    <div class="row"><span data-i18n="appearance"></span>
+      <div class="seg" id="themeSeg"><button data-v="system" data-i18n="th_system"></button><button data-v="light" data-i18n="th_light"></button><button data-v="dark" data-i18n="th_dark"></button></div></div>
+    <div class="row"><div><span data-i18n="light_mode"></span><div class="sub" data-i18n="light_hint"></div></div>
+      <label class="switch"><input type="checkbox" id="lightMode"><i></i></label></div>
+  </section>
+
+  <section class="card group">
+    <div class="row col"><span data-i18n="out_folder"></span>
+      <div class="inline"><input id="outPath" dir="ltr" spellcheck="false"><button id="outSave" class="tint" data-i18n="save"></button></div>
+    </div>
+    <div class="row"><div><span data-i18n="ar_font"></span><div class="sub" id="fontStatus"></div></div></div>
+  </section>
+
+  <section class="card group">
+    <div class="row"><div><span data-i18n="about"></span><div class="sub" id="aboutLine"></div></div>
+      <a id="repoLink" class="link-a" target="_blank" rel="noopener">GitHub</a></div>
+    <div class="row"><div><span data-i18n="updates"></span><div class="sub" id="updStatus"></div></div>
+      <button id="updCheck" class="tint" data-i18n="check_updates"></button></div>
+    <div class="row" id="updRow" hidden><div><span id="updTitle"></span></div>
+      <button id="updApply" class="primary small" hidden></button><button id="updRestart" class="primary small" hidden data-i18n="restart"></button></div>
+    <div class="row"><div><span data-i18n="engine"></span><div class="sub" id="engStatus"></div></div>
+      <button id="engUpdate" class="tint" data-i18n="update_engine"></button></div>
+  </section>
+
+  <button id="quit" class="link danger" data-i18n="quit" hidden></button>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
