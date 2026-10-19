@@ -280,6 +280,22 @@ def public_retry(it):
     return server.public(it)["can_retry"]
 
 
+class Startup(unittest.TestCase):
+    def test_starts_with_legacy_windows_console_encoding(self):
+        """ويندوز: طرفية cp1252 ما تقدر تكتب حروف مثل السهم، والبرنامج ما لازم ينهار منها."""
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", MSGA_HOME=tempfile.mkdtemp(), MSGA_PORT="8840")
+        p = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent.parent / "run.py"), "--no-open"],
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            time.sleep(3)
+            self.assertIsNone(p.poll(), p.stderr.read().decode(errors="replace") if p.poll() is not None else "")
+        finally:
+            p.terminate()
+            p.wait(timeout=10)
+            p.stdout.close()
+            p.stderr.close()
+
+
 class Updater(unittest.TestCase):
     def _zip(self, version, extra=None):
         buf = io.BytesIO()

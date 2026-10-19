@@ -64,13 +64,13 @@ jobs:
             BIN="dist/Make Sound Great Again/Make Sound Great Again.exe"
           fi
           export MSGA_HOME="$RUNNER_TEMP/msga_home"
-          "$BIN" --no-open &
+          "$BIN" --no-open > /dev/null 2>&1 &
           UP=0
           for i in $(seq 1 30); do
             if curl -fs http://127.0.0.1:8765/api/ping; then UP=1; break; fi
             sleep 1
           done
-          if [ "$UP" != "1" ]; then echo "app did not start"; exit 1; fi
+          if [ "$UP" != "1" ]; then echo "app did not start"; cat "$MSGA_HOME/app.log" 2>/dev/null; exit 1; fi
           echo " <- app is up"
           STATE=$(curl -fs http://127.0.0.1:8765/api/state)
           echo "$STATE" | python -c "import json,sys; d=json.load(sys.stdin); print('missing tools:', d['missing'])"
@@ -80,8 +80,8 @@ jobs:
           curl -fs -X POST -d '{}' http://127.0.0.1:8765/api/quit || true
           sleep 2
           # فحص النافذة الحقيقية من داخل النسخة المجمّعة (exit code فقط، لأن النسخة بدون طرفية)
-          "$BIN" --selftest
-          echo "window selftest exit code: $?"
+          timeout 150 "$BIN" --selftest || { RC=$?; echo "window selftest FAILED (exit $RC)"; cat "$MSGA_HOME/app.log" 2>/dev/null; exit 1; }
+          echo "window selftest OK"
       - name: Package
         shell: bash
         run: |

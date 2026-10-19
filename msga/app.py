@@ -80,6 +80,38 @@ def pick_window_runner():
     return run
 
 
+def setup_streams():
+    """ويندوز: الطرفية cp1252 ما تقدر تطبع كل الحروف، والنسخة المجمّعة (بدون طرفية) ما لها stdout أصلًا.
+    نخلي الطباعة UTF-8 ما تنهار، ونكتب السجل في ملف app.log (مفيد لو صار عطل)."""
+    log = None
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name)
+        if stream is None:
+            if log is None:
+                path = core.config_dir() / "app.log"
+                try:
+                    if path.exists() and path.stat().st_size > 1_000_000:
+                        path.unlink()
+                except OSError:
+                    pass
+                log = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
+            setattr(sys, name, log)
+        else:
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError):
+                pass
+
+    def hook(exc_type, exc, tb):
+        import traceback
+        text = "".join(traceback.format_exception(exc_type, exc, tb))
+        print(text, file=sys.stderr, flush=True)
+        if getattr(sys, "frozen", False):
+            show_error(f"{APP_NAME} crashed.\n\n{exc_type.__name__}: {exc}\n\nDetails: {core.config_dir() / 'app.log'}")
+
+    sys.excepthook = hook
+
+
 def selftest():
     """يفتح النافذة فعليًا، ينتظر تحميل الصفحة، ثم يقفل. للفحص الآلي على ويندوز وماك (exit 0 = نجح)."""
     import webview
@@ -113,6 +145,7 @@ def main(argv=None):
     ap.add_argument("--no-open", action="store_true", help="شغّل الخادم فقط بدون فتح أي شي")
     ap.add_argument("--selftest", action="store_true", help="فحص آلي: يفتح النافذة ويقفلها")
     args = ap.parse_args(argv)
+    setup_streams()
 
     if args.selftest:
         selftest()
@@ -141,7 +174,7 @@ def main(argv=None):
 
     httpd = server.make_server("window" if window_mode else "browser")
     url = f"http://{server.HOST}:{server.STATE.port}"
-    print(f"{APP_NAME} → {url}", flush=True)
+    print(f"{APP_NAME} -> {url}", flush=True)
     core.config_dir()
 
     if window_mode:
