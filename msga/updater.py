@@ -7,6 +7,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -14,7 +15,12 @@ from pathlib import Path
 from . import core
 from .version import GITHUB_REPO, VERSION
 
+FROZEN = bool(getattr(sys, "frozen", False))  # نسخة مجمّعة (exe / app): ما تنحدّث بنسخ الملفات
 PLACEHOLDER = "YOUR_GITHUB_USERNAME"
+CHECK_TTL = 6 * 3600
+ENGINE_COOLDOWN = 12 * 3600
+_check_cache = {"t": 0.0, "value": None}
+_engine_last = {"t": 0.0}
 SKIP_NAMES = {".git", "__pycache__", ".github"}
 
 
@@ -61,10 +67,24 @@ def repo_url():
     return None if PLACEHOLDER in repo else f"https://github.com/{repo}"
 
 
-def check():
-    """يرجع {current, latest, available} أو {error} (رسالة خطأ بالمفتاح)."""
+def releases_url():
+    base = repo_url()
+    return f"{base}/releases/latest" if base else None
+
+
+def check(use_cache=False):
+    """يرجع {current, latest, available} أو {error}. use_cache: يعيد آخر نتيجة لو أقل من 6 ساعات."""
+    if use_cache and _check_cache["value"] and time.time() - _check_cache["t"] < CHECK_TTL:
+        return _check_cache["value"]
+    out = _check()
+    if "error" not in out:
+        _check_cache.update(t=time.time(), value=out)
+    return out
+
+
+def _check():
     repo = detect_repo()
-    out = {"current": VERSION, "repo": repo}
+    out = {"current": VERSION, "repo": repo, "frozen": FROZEN}
     if PLACEHOLDER in repo:
         out["error"] = "no_repo"
         return out
@@ -94,6 +114,8 @@ def apply():
     repo = detect_repo()
     if PLACEHOLDER in repo:
         return {"ok": False, "error": "no_repo"}
+    if FROZEN:
+        return {"ok": False, "error": "frozen"}
     try:
         if (core.ROOT / ".git").exists() and shutil.which("git"):
             r = subprocess.run(["git", "-C", str(core.ROOT), "pull", "--ff-only"], capture_output=True, text=True)
@@ -131,8 +153,19 @@ def ytdlp_version():
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def auto_update_engine():
+    """يُستدعى تلقائيًا لما يفشل تنزيل: يحدّث yt-dlp (مرة كل 12 ساعة بحد أقصى). True لو تغيّر الإصدار فعلًا."""
+    if time.time() - _engine_last["t"] < ENGINE_COOLDOWN:
+        return False
+    _engine_last["t"] = time.time()
+    res = update_ytdlp()
+    return bool(res.get("ok") and res.get("after") and res.get("after") != res.get("before"))
+
+
 def update_ytdlp():
     """يحدّث yt-dlp (يوتيوب وغيره يغيّرون أشياءهم كثير، فهذا يصلح أغلب أعطال التنزيل)."""
+    if FROZEN and not shutil.which("yt-dlp"):
+        return {"ok": False, "error": "frozen"}
     try:
         import yt_dlp  # noqa: F401
         pip_installed = True

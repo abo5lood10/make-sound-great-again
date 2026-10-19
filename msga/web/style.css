@@ -134,3 +134,28 @@ audio { width: 100%; margin-top: 10px; }
 
 .num { width: 80px; background: var(--fill); border: 0; border-radius: 8px; padding: 6px 8px; color: var(--text); font: inherit; }
 #cleanBox { flex-wrap: wrap; margin-bottom: 10px; }
+
+/* ===== ميزات 1.1 ===== */
+.icon-btn { position: relative; }
+.dot { position: absolute; top: 5px; inset-inline-end: 5px; width: 9px; height: 9px; border-radius: 50%; background: var(--bad); border: 2px solid var(--bg); }
+.notice.upd { background: color-mix(in srgb, var(--blue) 12%, transparent); border-color: color-mix(in srgb, var(--blue) 40%, transparent); }
+.paste-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.paste-row .link { padding: 2px 6px; font-size: 13px; }
+.tune { padding: 0; }
+.tune summary { padding: 11px 14px; cursor: pointer; font-weight: 500; list-style: none; }
+.tune summary::-webkit-details-marker { display: none; }
+.tune summary::after { content: "▾"; float: inline-end; color: var(--sub); }
+.tune[open] summary::after { content: "▴"; }
+.tune .row { border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; }
+.slider { display: flex; align-items: center; gap: 10px; flex: 1; max-width: 260px; }
+.slider input { flex: 1; accent-color: var(--blue); }
+.slider output { min-width: 28px; text-align: center; font-size: 13px; color: var(--sub); direction: ltr; }
+.song .actions { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.song .actions:empty { display: none; }
+.more { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+.rerun { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-inline-start: auto; }
+.rerun select { max-width: 180px; font-size: 13px; padding: 4px 8px; }
+.spec { margin-top: 8px; }
+.spec figure { margin: 6px 0; }
+.spec figcaption { font-size: 12px; color: var(--sub); margin-bottom: 2px; }
+.spec img { width: 100%; height: auto; border-radius: 8px; display: block; background: #000; }

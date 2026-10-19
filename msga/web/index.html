@@ -12,6 +12,7 @@
 <header class="bar">
   <button id="gear" class="icon-btn" aria-label="Settings">
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    <i id="gearDot" class="dot" hidden></i>
   </button>
 </header>
 
@@ -24,9 +25,11 @@
   </div>
 
   <div id="banner" class="notice" hidden></div>
+  <div id="updBanner" class="notice upd" hidden><span id="updBannerText"></span> <button id="updBannerGo" class="link" data-i18n="open_settings"></button></div>
 
   <section class="card pad">
     <textarea id="urls" rows="3" dir="ltr" spellcheck="false" data-i18n-ph="url_placeholder"></textarea>
+    <div class="paste-row"><button id="pasteBtn" class="link" data-i18n="paste_link"></button><span id="pasteHint" class="sub"></span></div>
   </section>
 
   <div id="drop" class="drop" tabindex="0" role="button">
@@ -41,12 +44,20 @@
     <div class="row"><span data-i18n="preset"></span>
       <select id="preset"></select></div>
     <div class="row"><span data-i18n="format"></span>
-      <div class="seg" id="format"><button data-v="flac">FLAC</button><button data-v="mp3">MP3 320</button></div></div>
+      <select id="format"></select></div>
     <div class="row"><span data-i18n="jobs"></span>
       <div class="seg stepper"><button id="jobsMinus" aria-label="-">−</button><span id="jobsVal">1</span><button id="jobsPlus" aria-label="+">+</button></div></div>
     <div class="row"><span data-i18n="playlist"></span>
       <label class="switch"><input type="checkbox" id="playlist"><i></i></label></div>
   </section>
+
+  <details id="tune" class="card group tune">
+    <summary data-i18n="fine_tune"></summary>
+    <div class="row"><span data-i18n="bass"></span>
+      <div class="slider"><input type="range" id="bass" min="-6" max="6" step="1" value="0"><output id="bassVal">0</output></div></div>
+    <div class="row"><span data-i18n="treble"></span>
+      <div class="slider"><input type="range" id="treble" min="-6" max="6" step="1" value="0"><output id="trebleVal">0</output></div></div>
+  </details>
   <button id="saveDefaults" class="link" data-i18n="save_defaults"></button>
 
   <button id="go" class="primary" data-i18n="go"></button>
@@ -83,6 +94,8 @@
       <div class="seg" id="themeSeg"><button data-v="system" data-i18n="th_system"></button><button data-v="light" data-i18n="th_light"></button><button data-v="dark" data-i18n="th_dark"></button></div></div>
     <div class="row"><div><span data-i18n="light_mode"></span><div class="sub" data-i18n="light_hint"></div></div>
       <label class="switch"><input type="checkbox" id="lightMode"><i></i></label></div>
+    <div class="row"><div><span data-i18n="notify_label"></span><div class="sub" data-i18n="notify_hint"></div></div>
+      <label class="switch"><input type="checkbox" id="notifyOn"><i></i></label></div>
   </section>
 
   <section class="card group">
@@ -95,10 +108,14 @@
   <section class="card group">
     <div class="row"><div><span data-i18n="about"></span><div class="sub" id="aboutLine"></div></div>
       <button id="repoLink" class="link">GitHub ↗</button></div>
+    <div class="row"><div><span data-i18n="auto_check"></span></div>
+      <label class="switch"><input type="checkbox" id="autoCheck"><i></i></label></div>
     <div class="row"><div><span data-i18n="updates"></span><div class="sub" id="updStatus"></div></div>
       <button id="updCheck" class="tint" data-i18n="check_updates"></button></div>
     <div class="row" id="updRow" hidden><div><span id="updTitle"></span></div>
-      <button id="updApply" class="primary small" hidden></button><button id="updRestart" class="primary small" hidden data-i18n="restart"></button></div>
+      <button id="updApply" class="primary small" hidden></button>
+      <button id="updReleases" class="primary small" hidden data-i18n="open_releases"></button>
+      <button id="updRestart" class="primary small" hidden data-i18n="restart"></button></div>
     <div class="row"><div><span data-i18n="engine"></span><div class="sub" id="engStatus"></div></div>
       <button id="engUpdate" class="tint" data-i18n="update_engine"></button></div>
   </section>

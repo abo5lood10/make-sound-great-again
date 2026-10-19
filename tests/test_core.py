@@ -101,7 +101,7 @@ class Processing(unittest.TestCase):
 class ServerAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        core.save_config({**core.load_config(), "out": str(Path(_HOME) / "out")})
+        core.save_config({**core.load_config(), "out": str(Path(_HOME) / "out"), "notify": False})
         cls.httpd = server.make_server("window")
         cls.port = server.STATE.port
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
@@ -149,6 +149,135 @@ class ServerAPI(unittest.TestCase):
         status, data = self.req("GET", url, headers={"Range": "bytes=0-99"})
         self.assertEqual((status, len(data)), (206, 100))
         self.assertEqual(list(core.upload_dir().iterdir()), [])  # الملف المرفوع انحذف
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+class Features(unittest.TestCase):
+    def test_all_formats(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "in.mp3"
+            make_tone(src)
+            for fmt in core.CODECS:
+                if fmt == "opus" and "libopus" not in subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                                                                      capture_output=True, text=True).stdout:
+                    continue
+                res = core.process_item(str(src), {"format": fmt, "out_dir": d, "bass": 3, "treble": -2})
+                self.assertTrue(res["output"].endswith("." + fmt))
+                self.assertGreater(Path(res["output"]).stat().st_size, 1000, fmt)
+
+    def test_cancel(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "in.mp3"
+            make_tone(src)
+            token = core.CancelToken()
+            token.cancel()
+            with self.assertRaises(core.EnhanceError) as ctx:
+                core.process_item(str(src), {"out_dir": d, "token": token})
+            self.assertEqual(ctx.exception.key, "err_cancelled")
+
+    def test_spectrogram(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "in.mp3"
+            make_tone(src)
+            png = core.spectrogram(src, Path(d) / "s.png")
+            self.assertGreater(Path(png).stat().st_size, 1000)
+
+    def test_engine_update_retry(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(core, "download", side_effect=[core.EnhanceError("err_dl", detail=""),
+                                                                 (Path(d) / "x.mp3", None)]) as dl:
+            make_tone(Path(d) / "x.mp3")
+            core.set_engine_updater(lambda: calls.append(1) or True)
+            try:
+                core.process_item("https://example.com/x", {"out_dir": d})
+            finally:
+                core.set_engine_updater(None)
+            self.assertEqual(dl.call_count, 2)
+            self.assertEqual(calls, [1])
+
+    def test_no_engine_retry_for_private_video(self):
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(core, "download", side_effect=core.EnhanceError("err_private")) as dl:
+            core.set_engine_updater(lambda: True)
+            try:
+                with self.assertRaises(core.EnhanceError):
+                    core.process_item("https://example.com/x", {"out_dir": d})
+            finally:
+                core.set_engine_updater(None)
+            self.assertEqual(dl.call_count, 1)
+
+
+class ServerFeatures(unittest.TestCase):
+    """يشغّل الخادم بحالة نظيفة ويفحص الإلغاء والسجل والمعالجة المتكررة."""
+
+    @classmethod
+    def setUpClass(cls):
+        core.save_config({**core.load_config(), "out": str(Path(_HOME) / "out2"), "notify": False})
+        server.STATE.items.clear()
+        cls.httpd = server.make_server("window")
+        cls.port = server.STATE.port
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def call(self, method, path, body=None):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=20)
+        data = json.dumps(body).encode() if isinstance(body, dict) else body
+        c.request(method, path, body=data)
+        r = c.getresponse()
+        raw = r.read()
+        c.close()
+        return r.status, raw
+
+    def items(self):
+        return json.loads(self.call("GET", "/api/state")[1])["items"]
+
+    def wait(self, pred, tries=120):
+        for _ in range(tries):
+            hit = next((i for i in self.items() if pred(i)), None)
+            if hit:
+                return hit
+            time.sleep(0.5)
+        self.fail("timeout")
+
+    @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+    def test_reprocess_history_and_spectrogram(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "feat.mp3"
+            make_tone(src)
+            self.call("POST", "/api/upload?name=feat.mp3&preset=auto&format=flac", src.read_bytes())
+        first = self.wait(lambda i: i["label"] == "feat.mp3" and i["status"] == "done")
+        self.assertTrue(first["can_rerun"])
+        st, png = self.call("GET", f"/api/spectrogram?id={first['id']}&which=e")
+        self.assertEqual((st, png[:4]), (200, b"\x89PNG"))
+        st, _ = self.call("POST", "/api/reprocess", {"id": first["id"], "preset": "bass", "format": "mp3", "bass": 2})
+        self.assertEqual(st, 200)
+        again = self.wait(lambda i: i["id"] != first["id"] and i["label"] == "feat.mp3" and i["status"] == "done")
+        self.assertTrue(again["result"]["output_url"].endswith(".mp3"))
+        self.assertTrue(again["result"]["original_url"])  # المقارنة تبقى متاحة
+        hist = json.loads(server.history_path().read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(hist), 2)
+        # السجل يرجع بعد "إعادة التشغيل"
+        server.STATE.items.clear()
+        server.load_history()
+        self.assertGreaterEqual(len(self.items()), 2)
+
+    def test_cancel_and_retry(self):
+        it = server.STATE.new_item("x", "file", source="/nonexistent.mp3",
+                                   opts={"preset": "auto", "format": "flac", "out_dir": _HOME, "light": True})
+        it["_token"].cancel()
+        self.assertEqual(self.call("POST", "/api/cancel", {"id": it["id"]})[0], 200)
+        server.run_item(it)  # الإلغاء قبل البدء يعطي حالة cancelled
+        self.assertEqual(it["status"], "cancelled")
+        self.assertFalse(public_retry(it))
+
+
+def public_retry(it):
+    return server.public(it)["can_retry"]
 
 
 class Updater(unittest.TestCase):

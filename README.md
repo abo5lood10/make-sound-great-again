@@ -16,6 +16,11 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 - Saves **FLAC** (lossless) or **MP3 320**, keeping the cover art and tags.
 - **A/B player** at equal loudness: compare the original and the enhanced version.
 - Playlists, parallel jobs, progress bars, clear error messages.
+- **Cancel** or **retry** any song; your **history survives restarts**; a link you already processed with the same settings isn't redone.
+- **Try another preset** on a finished song without downloading again, and **fine-tune bass / treble** (±6 dB).
+- **Spectrogram** (before / after) to *see* what changed, not just hear it.
+- Formats: **FLAC, MP3 320, M4A (AAC 256), Opus 192, WAV 24-bit**.
+- **Notification** when everything is done; paste a link from the clipboard; `Ctrl+Enter` to start.
 
 > It can't bring back detail a low-quality source never had (a 64 kbps clip gets cleaner and clearer, not studio quality).
 
@@ -63,9 +68,20 @@ Your settings live outside the program folder (`%APPDATA%\MakeSoundGreatAgain`, 
 
 ## Updates
 
-*Settings → Check for updates → Update → Restart.* The app reads `msga/version.py` on this repository's `main` branch and, if the number is higher, downloads the new files (or runs `git pull` if you cloned it).
+The app **checks for updates when it starts** (a red dot appears on the gear icon; turn it off in Settings), and if a download fails it **updates yt-dlp by itself and retries once**.
+Manual: *Settings → Check for updates → Update → Restart.* The app reads `msga/version.py` on this repository's `main` branch and, if the number is higher, downloads the new files (or runs `git pull` if you cloned it).
 To release a new version: bump `VERSION` in `msga/version.py` and push to `main`.
 If you fork it, set your own repo with `python scripts/set_repo.py YOUR_USERNAME` (a git clone detects it automatically).
+
+## Standalone builds (no Python needed)
+
+Pushing a version tag builds Windows and macOS apps on GitHub and attaches them to a release:
+
+```bash
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+You still need ffmpeg installed (`winget install ffmpeg` / `brew install ffmpeg`). Packaged builds update by downloading the new release (the app opens the download page for you). The release workflow smoke-tests each build before publishing.
 
 ## Fonts
 

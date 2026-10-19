@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -59,7 +60,8 @@ def upload_dir():
 
 DEFAULT_OUT = str(Path.home() / "Music" / "Make Sound Great Again")
 DEFAULT_CONFIG = {"preset": "auto", "format": "flac", "jobs": 1, "out": DEFAULT_OUT,
-                  "lang": "ar", "theme": "system", "light": True}
+                  "lang": "ar", "theme": "system", "light": True,
+                  "bass": 0, "treble": 0, "notify": True, "auto_check": True}
 
 # ملاحظة: كل النماذج تنتهي بتطبيع مستوى الصوت (مرحلتين) وlimiter عشان ما يصير تشويه.
 PRESETS = {
@@ -107,7 +109,11 @@ AUTO_MAP = {"low": "clean", "mid": "natural", "high": "gentle"}
 CODECS = {
     "flac": ["-c:a", "flac", "-sample_fmt", "s32", "-ar", "48000"],
     "mp3": ["-c:a", "libmp3lame", "-b:a", "320k", "-ar", "48000", "-id3v2_version", "3"],
+    "m4a": ["-c:a", "aac", "-b:a", "256k", "-ar", "48000"],
+    "opus": ["-c:a", "libopus", "-b:a", "192k", "-ar", "48000"],
+    "wav": ["-c:a", "pcm_s24le", "-ar", "48000"],
 }
+COVER_FORMATS = ("flac", "mp3", "m4a")  # الصيغ اللي تقبل صورة الغلاف داخل الملف
 
 LOUDNORM = "loudnorm=I=-14:TP=-1.0:LRA=11"
 LOSSLESS = ("flac", "alac", "wav", "ape", "wavpack", "tta")
@@ -118,6 +124,7 @@ MESSAGES = {
     "st_analyze": ("تحليل جودة المصدر", "Analyzing source"),
     "st_measure": ("قياس مستوى الصوت", "Measuring loudness"),
     "st_process": ("معالجة وحفظ", "Processing & saving"),
+    "st_engine": ("تحديث محرك التنزيل", "Updating the download engine"),
     "st_done": ("تم", "Done"),
     # الأخطاء
     "err_tools": ("ناقص برنامج: {tools}", "Missing program(s): {tools}"),
@@ -135,6 +142,7 @@ MESSAGES = {
     "err_ffmpeg": ("فشلت المعالجة: {tail}", "Processing failed: {tail}"),
     "err_unreadable": ("ما قدرت أقرأ الملف، تأكد إنه ملف صوت صحيح.", "Couldn't read the file. Make sure it's a valid audio file."),
     "err_noaudio": ("الملف ما فيه صوت.", "The file has no audio."),
+    "err_cancelled": ("تم الإلغاء", "Cancelled"),
     "err_notfound": ("ما لقيت الملف: {source}", "File not found: {source}"),
     # أسباب تقدير الجودة
     "why_lossless": ("ملف بدون ضغط (Lossless)", "Uncompressed (lossless) file"),
@@ -185,8 +193,14 @@ def sanitize_config(cfg):
         out["lang"] = cfg["lang"]
     if cfg.get("theme") in ("system", "light", "dark"):
         out["theme"] = cfg["theme"]
-    if isinstance(cfg.get("light"), bool):
-        out["light"] = cfg["light"]
+    for key in ("light", "notify", "auto_check"):
+        if isinstance(cfg.get(key), bool):
+            out[key] = cfg[key]
+    for key in ("bass", "treble"):
+        try:
+            out[key] = max(-6, min(6, int(cfg.get(key, 0))))
+        except (TypeError, ValueError):
+            pass
     return out
 
 
@@ -214,6 +228,9 @@ def set_light(value):
 
 
 def ytdlp_cmd():
+    if getattr(sys, "frozen", False):  # نسخة مجمّعة: yt-dlp داخل التطبيق نفسه (run.py --ytdlp)
+        exe = shutil.which("yt-dlp")
+        return [exe] if exe else [sys.executable, "--ytdlp"]
     exe = shutil.which("yt-dlp")
     if exe:
         return [exe]
@@ -254,8 +271,36 @@ def _popen_kwargs():
     return kw
 
 
-def popen(cmd, **kw):
-    return subprocess.Popen(_wrap(cmd), encoding="utf-8", errors="replace", **{**_popen_kwargs(), **kw})
+class CancelToken:
+    """رمز إلغاء: cancel() يوقف العمليات الشغّالة لهذي المهمة."""
+
+    def __init__(self):
+        self._event = threading.Event()
+        self.procs = []
+
+    def is_set(self):
+        return self._event.is_set()
+
+    def cancel(self):
+        self._event.set()
+        for p in list(self.procs):
+            try:
+                p.terminate()
+            except OSError:
+                pass
+
+    def check(self):
+        if self._event.is_set():
+            raise EnhanceError("err_cancelled")
+
+
+def popen(cmd, token=None, **kw):
+    p = subprocess.Popen(_wrap(cmd), encoding="utf-8", errors="replace", **{**_popen_kwargs(), **kw})
+    if token is not None:
+        token.procs.append(p)
+        if token.is_set():
+            p.terminate()
+    return p
 
 
 def run(cmd, **kw):
@@ -311,7 +356,7 @@ def expand_playlist(url):
     return urls or [url]
 
 
-def download(url, dest, cb):
+def download(url, dest, cb, token=None):
     """ينزّل أعلى جودة صوت بالصيغة الأصلية (بدون تحويل) مع الغلاف والبيانات. يرجع (الملف، الغلاف|None)."""
     cmd = [
         *ytdlp_cmd(), "--no-playlist", "-f", "bestaudio/best", "--encoding", "utf-8",
@@ -322,7 +367,7 @@ def download(url, dest, cb):
     ]
     filepath = None
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
-        p = popen(cmd, stdout=subprocess.PIPE, stderr=err)
+        p = popen(cmd, token, stdout=subprocess.PIPE, stderr=err)
         for line in p.stdout:
             line = line.strip()
             m = re.match(r"download:\s*([\d.]+)%", line)
@@ -331,8 +376,11 @@ def download(url, dest, cb):
             elif line and not line.startswith("download:"):
                 filepath = line
         p.wait()
+        p.stdout.close()
         err.seek(0)
         errtext = err.read()
+    if token is not None:
+        token.check()
     if p.returncode != 0:
         raise translate_ytdlp_error(errtext)
     if not filepath or not Path(filepath).exists():
@@ -344,11 +392,11 @@ def download(url, dest, cb):
 
 # ---------- ffmpeg ----------
 
-def run_ffmpeg(args, duration=None, cb=None):
+def run_ffmpeg(args, duration=None, cb=None, token=None):
     """يشغّل ffmpeg مع تقدّم. يرجع نص stderr."""
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
         p = popen(["ffmpeg", "-y", "-hide_banner", "-nostdin", "-nostats", "-progress", "pipe:1", *args],
-                  stdout=subprocess.PIPE, stderr=err)
+                  token, stdout=subprocess.PIPE, stderr=err)
         for line in p.stdout:
             if cb and duration and line.startswith("out_time_us="):
                 try:
@@ -356,8 +404,11 @@ def run_ffmpeg(args, duration=None, cb=None):
                 except ValueError:
                     pass
         p.wait()
+        p.stdout.close()
         err.seek(0)
         text = err.read()
+    if token is not None:
+        token.check()
     if p.returncode != 0:
         tail = [ln for ln in text.strip().splitlines() if ln.strip()][-3:]
         raise EnhanceError("err_ffmpeg", tail=" | ".join(tail))
@@ -407,7 +458,7 @@ def probe(path):
     }
 
 
-def analyze(path, duration, cb):
+def analyze(path, duration, cb, token=None):
     """مرور واحد: مستوى الصوت (LUFS) + وجود ترددات فوق 16kHz."""
     fc = ("[0:a]asplit=3[a][b][c];"
           f"[a]{LOUDNORM}:print_format=json[o1];"
@@ -416,7 +467,7 @@ def analyze(path, duration, cb):
     text = run_ffmpeg(["-i", str(path), "-filter_complex", fc,
                        "-map", "[o1]", "-f", "null", "-",
                        "-map", "[o2]", "-f", "null", "-",
-                       "-map", "[o3]", "-f", "null", "-"], duration, cb)
+                       "-map", "[o3]", "-f", "null", "-"], duration, cb, token)
     ln = parse_loudnorm_json(text) or {}
     means = {}
     for m in re.finditer(r"Parsed_volumedetect_(\d+) @ \S+\s+mean_volume:\s*(\S+) dB", text):
@@ -450,10 +501,23 @@ def extract_cover(src, idx, tmp):
 
 # ---------- المعالجة الكاملة ----------
 
+# دالة يضبطها الخادم: تحدّث yt-dlp (مرة كل فترة) وترجع True لو حاولت التحديث
+_engine_updater = None
+
+
+def set_engine_updater(fn):
+    global _engine_updater
+    _engine_updater = fn
+
+
+ENGINE_RETRY = ("err_dl", "err_format", "err_blocked", "err_signin", "err_unsupported")
+
+
 def process_item(source, opts, cb=lambda stage, frac: None):
     """
     source: رابط أو مسار ملف.
-    opts: preset ('auto' أو اسم نمط)، format، out_dir، name (اختياري)، keep_original (اختياري)، light (اختياري).
+    opts: preset ('auto' أو اسم نمط)، format، out_dir، name (اختياري)، keep_original (اختياري)، light (اختياري)،
+          bass / treble (dB من -6 إلى 6)، token (CancelToken)، original_override (مسار النسخة الأصلية للمقارنة).
     cb(stage_key, frac): تقدّم عام من 0 إلى 1 (stage_key مفتاح في MESSAGES).
     """
     remote = is_url(source)
@@ -464,6 +528,11 @@ def process_item(source, opts, cb=lambda stage, frac: None):
     out_dir = Path(opts.get("out_dir") or DEFAULT_OUT).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
     keep_original = opts.get("keep_original", remote)
+    token = opts.get("token")
+    bass, treble = int(opts.get("bass", 0) or 0), int(opts.get("treble", 0) or 0)
+    extra = ([f"bass=g={bass}:f=110"] if bass else []) + ([f"treble=g={treble}:f=8000"] if treble else [])
+    if token:
+        token.check()
 
     with tempfile.TemporaryDirectory(prefix="msga_") as tmpd:
         tmp = Path(tmpd)
@@ -471,7 +540,15 @@ def process_item(source, opts, cb=lambda stage, frac: None):
         base = 0.0
         if remote:
             cb("st_download", 0.0)
-            src, cover = download(source, tmp, sub(cb, "st_download", 0.0, 0.3))
+            try:
+                src, cover = download(source, tmp, sub(cb, "st_download", 0.0, 0.3), token)
+            except EnhanceError as e:
+                # فشل التنزيل غالبًا سببه تغيير في الموقع: نحدّث yt-dlp مرة ونعيد المحاولة
+                if e.key in ENGINE_RETRY and _engine_updater and _engine_updater():
+                    cb("st_engine", 0.0)
+                    src, cover = download(source, tmp, sub(cb, "st_download", 0.0, 0.3), token)
+                else:
+                    raise
             base = 0.3
         else:
             src = Path(source).expanduser()
@@ -489,16 +566,16 @@ def process_item(source, opts, cb=lambda stage, frac: None):
             return base + span * x
 
         cb("st_analyze", t(0.0))
-        an = analyze(src, dur, sub(cb, "st_analyze", t(0.0), t(0.12)))
+        an = analyze(src, dur, sub(cb, "st_analyze", t(0.0), t(0.12)), token)
         quality, (reason_key, reason_params) = classify(info, an["hf_rel"])
         auto = preset_opt == "auto"
         preset = AUTO_MAP[quality] if auto else preset_opt
-        chain = ",".join(PRESETS[preset])
+        chain = ",".join(PRESETS[preset] + extra)
 
         # المرحلة 1: قياس بعد الفلاتر عشان التطبيع يكون دقيق
         m = parse_loudnorm_json(run_ffmpeg(
             ["-i", str(src), "-vn", "-af", f"{chain},{LOUDNORM}:print_format=json", "-f", "null", "-"],
-            dur, sub(cb, "st_measure", t(0.12), t(0.45)))) or {}
+            dur, sub(cb, "st_measure", t(0.12), t(0.45)), token)) or {}
         keys = ("input_i", "input_lra", "input_tp", "input_thresh", "target_offset")
         if all(isinstance(m.get(k), float) and math.isfinite(m[k]) for k in keys):
             ln2 = (f"{LOUDNORM}:measured_I={m['input_i']}:measured_LRA={m['input_lra']}"
@@ -520,19 +597,21 @@ def process_item(source, opts, cb=lambda stage, frac: None):
             n += 1
 
         args = ["-i", str(src)]
-        if cover:
+        if cover and fmt in COVER_FORMATS:
             args += ["-i", str(cover), "-map", "0:a:0", "-map", "1:v", "-c:v", "copy",
                      "-disposition:v", "attached_pic"]
         else:
             args += ["-vn", "-map", "0:a:0"]
         args += ["-map_metadata", "0", "-af", final_chain, *CODECS[fmt], str(out)]
-        text = run_ffmpeg(args, dur, sub(cb, "st_process", t(0.45), t(0.97)))
+        text = run_ffmpeg(args, dur, sub(cb, "st_process", t(0.45), t(0.97)), token)
         after = parse_loudnorm_json(text) or {}
 
         original_path = None
         if keep_original:
             shutil.copy2(src, orig)
             original_path = orig
+        elif opts.get("original_override"):
+            original_path = Path(opts["original_override"])
 
     cb("st_done", 1.0)
     return {
@@ -551,6 +630,16 @@ def process_item(source, opts, cb=lambda stage, frac: None):
             "duration": info["duration"], "format": fmt,
         },
     }
+
+
+def spectrogram(src, out_png):
+    """يرسم طيف الترددات (spectrogram) لملف صوت كصورة PNG."""
+    r = run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-lavfi",
+             "showspectrumpic=s=900x240:legend=0:fscale=log:color=intensity", "-frames:v", "1", str(out_png)])
+    if r.returncode != 0 or not Path(out_png).exists():
+        tail = [ln for ln in r.stderr.strip().splitlines() if ln.strip()][-2:]
+        raise EnhanceError("err_ffmpeg", tail=" | ".join(tail))
+    return out_png
 
 
 def clean_old(out_dir, days):

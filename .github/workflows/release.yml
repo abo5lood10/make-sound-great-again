@@ -1,0 +1,77 @@
+name: Release
+
+# شغّله بدفع وسم إصدار:  git tag v1.1.0 && git push origin v1.1.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows, os: windows-latest, sep: ";", icon: assets/icon.ico }
+          - { name: macos, os: macos-latest, sep: ":", icon: assets/icon.icns }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build requirements
+        run: python -m pip install -r requirements.txt pywebview pyinstaller
+      - name: Build
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --windowed --name "Make Sound Great Again" \
+            --icon "${{ matrix.icon }}" \
+            --add-data "msga/web${{ matrix.sep }}msga/web" \
+            --add-data "assets${{ matrix.sep }}assets" \
+            --collect-all yt_dlp \
+            run.py
+      - name: Smoke test (the built app must start and answer)
+        shell: bash
+        run: |
+          if [ "${{ matrix.name }}" = "macos" ]; then
+            BIN="dist/Make Sound Great Again.app/Contents/MacOS/Make Sound Great Again"
+          else
+            BIN="dist/Make Sound Great Again/Make Sound Great Again.exe"
+          fi
+          export MSGA_HOME="$RUNNER_TEMP/msga_home"
+          "$BIN" --no-open &
+          for i in $(seq 1 30); do
+            if curl -fs http://127.0.0.1:8765/api/ping; then echo " <- app is up"; kill %1 || true; exit 0; fi
+            sleep 1
+          done
+          echo "app did not start"; exit 1
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p out
+          if [ "${{ matrix.name }}" = "macos" ]; then
+            ditto -c -k --keepParent "dist/Make Sound Great Again.app" "out/Make-Sound-Great-Again-macos.zip"
+          else
+            powershell -Command "Compress-Archive -Path 'dist/Make Sound Great Again' -DestinationPath 'out/Make-Sound-Great-Again-windows.zip'"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: out/*.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" out/*.zip --repo "${{ github.repository }}" --generate-notes --title "${{ github.ref_name }}"

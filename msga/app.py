@@ -8,7 +8,7 @@ import urllib.request
 import webbrowser
 
 from . import core, server
-from .version import APP_NAME
+from .version import APP_NAME, VERSION
 
 
 def already_running():
@@ -18,7 +18,7 @@ def already_running():
             with urllib.request.urlopen(f"http://{server.HOST}:{port}/api/ping", timeout=0.4) as r:
                 data = json.loads(r.read())
                 if data.get("app") == APP_NAME:
-                    return f"http://{server.HOST}:{port}", data.get("mode"), port
+                    return f"http://{server.HOST}:{port}", data.get("mode"), port, data.get("version")
         except Exception:
             continue
     return None
@@ -71,8 +71,9 @@ def main(argv=None):
         window_mode = runner is not None
 
     existing = already_running()
-    if existing and window_mode and existing[1] == "browser" and quit_existing(existing[2]):
-        existing = None  # قفلنا النسخة القديمة (وضع المتصفح) ونفتح نافذة
+    stale = existing and (existing[3] != VERSION or (window_mode and existing[1] == "browser"))
+    if stale and quit_existing(existing[2]):
+        existing = None  # نسخة قديمة (إصدار مختلف أو وضع متصفح): قفلناها ونفتح الجديدة
     if existing:
         if not args.no_open:
             webbrowser.open(existing[0])
