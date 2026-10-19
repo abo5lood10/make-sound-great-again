@@ -122,9 +122,10 @@ def main(argv=None):
     if not args.browser and not args.no_open:
         runner = pick_window_runner()
         if runner is None and DESKTOP_ONLY:
-            show_error("The app window couldn't start: the 'pywebview' package is missing.\n"
-                       "Fix: run  pip install pywebview  and start the app again.\n"
-                       "(على ويندوز يلزم أيضًا Microsoft Edge WebView2 Runtime)")
+            show_error("The app window couldn't start: the 'pywebview' package is missing.\n\n"
+                       "If you started it from the source code, run:\n"
+                       "pip install -r requirements.txt\n\n"
+                       "Easier: download the ready-made Windows build (.exe) from the project's Releases page.")
             sys.exit(1)
     window_mode = runner is not None
 

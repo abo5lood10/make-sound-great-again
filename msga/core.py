@@ -23,7 +23,7 @@ WEB_DIR = PKG_DIR / "web"
 
 def _extend_path():
     """تطبيقات الواجهة (Finder / قائمة ابدأ) غالبًا PATH فيها ناقص، فنضيف أماكن التثبيت المعروفة."""
-    extra = []
+    extra = [str(ROOT / "bin")]  # ffmpeg / ffprobe المضمّنين مع النسخة الجاهزة (لو موجودين)
     if IS_MAC:
         extra += ["/opt/homebrew/bin", "/usr/local/bin"]
     elif not IS_WIN:

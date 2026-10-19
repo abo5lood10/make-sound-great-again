@@ -32,6 +32,13 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 
 ## Install
 
+### Windows: just download the app (no Python, no ffmpeg install)
+
+Go to the **[Releases](../../releases/latest)** page, download `Make-Sound-Great-Again-windows.zip`, extract it, and double-click **`Make Sound Great Again.exe`**. ffmpeg is already inside. (Windows needs the Edge WebView2 runtime, already present on Windows 10/11.)
+Windows SmartScreen may warn about an unsigned app: *More info → Run anyway*.
+
+### From source (all systems)
+
 You need **Python 3.8+** and **ffmpeg** (with ffprobe). `yt-dlp` and the window library are installed for you by the start scripts.
 
 | OS | ffmpeg | Start |
@@ -75,13 +82,13 @@ If you fork it, set your own repo with `python scripts/set_repo.py YOUR_USERNAME
 
 ## Standalone builds (no Python needed)
 
-Pushing a version tag builds Windows and macOS apps on GitHub and attaches them to a release:
+Pushing a version tag builds the apps on GitHub and attaches them to a release (the Windows build bundles an LGPL ffmpeg, checksum-verified in CI; the macOS build needs `brew install ffmpeg`):
 
 ```bash
 git tag v1.1.0 && git push origin v1.1.0
 ```
 
-You still need ffmpeg installed (`winget install ffmpeg` / `brew install ffmpeg`). Packaged builds update by downloading the new release (the app opens the download page for you). The release workflow smoke-tests each build before publishing.
+Packaged builds update by downloading the new release (the app opens the download page for you). The release workflow smoke-tests each build before publishing.
 
 ## Fonts
 

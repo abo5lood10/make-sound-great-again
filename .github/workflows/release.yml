@@ -16,8 +16,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: windows, os: windows-latest, sep: ";", icon: assets/icon.ico }
-          - { name: macos, os: macos-latest, sep: ":", icon: assets/icon.icns }
+          - { name: windows, os: windows-latest, sep: ";", icon: assets/icon.ico, bundle_ffmpeg: true }
+          - { name: macos, os: macos-latest, sep: ":", icon: assets/icon.icns, bundle_ffmpeg: false }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,14 +25,35 @@ jobs:
           python-version: "3.12"
       - name: Install build requirements
         run: python -m pip install -r requirements.txt pyinstaller
+      - name: Bundle ffmpeg (Windows, LGPL build, checksum verified)
+        if: matrix.bundle_ffmpeg
+        shell: pwsh
+        run: |
+          $base = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest"
+          $zip = "ffmpeg-master-latest-win64-lgpl.zip"
+          Invoke-WebRequest "$base/$zip" -OutFile $zip
+          Invoke-WebRequest "$base/checksums.sha256" -OutFile checksums.sha256
+          $expected = ((Select-String -Path checksums.sha256 -Pattern ([regex]::Escape($zip)) | Select-Object -First 1).Line -split "\s+")[0]
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($expected.ToLower() -ne $actual.ToLower()) { throw "ffmpeg checksum mismatch" }
+          Expand-Archive $zip -DestinationPath ff
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Copy-Item (Get-ChildItem ff -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName bin/
+          Copy-Item (Get-ChildItem ff -Recurse -Filter ffprobe.exe | Select-Object -First 1).FullName bin/
+          $enc = & bin/ffmpeg.exe -hide_banner -encoders 2>&1 | Out-String
+          foreach ($name in "libmp3lame", "libopus", "flac", " aac ") { if ($enc -notmatch $name) { throw "bundled ffmpeg lacks encoder: $name" } }
       - name: Build
         shell: bash
         run: |
+          EXTRA=""
+          if [ -d bin ]; then EXTRA="--add-data bin${{ matrix.sep }}bin"; fi
           pyinstaller --noconfirm --windowed --name "Make Sound Great Again" \
             --icon "${{ matrix.icon }}" \
             --add-data "msga/web${{ matrix.sep }}msga/web" \
             --add-data "assets${{ matrix.sep }}assets" \
+            --add-data "THIRD_PARTY.md${{ matrix.sep }}." \
             --collect-all yt_dlp \
+            $EXTRA \
             run.py
       - name: Smoke test (the built app must start and answer)
         shell: bash
@@ -44,11 +65,23 @@ jobs:
           fi
           export MSGA_HOME="$RUNNER_TEMP/msga_home"
           "$BIN" --no-open &
+          UP=0
           for i in $(seq 1 30); do
-            if curl -fs http://127.0.0.1:8765/api/ping; then echo " <- app is up"; kill %1 || true; exit 0; fi
+            if curl -fs http://127.0.0.1:8765/api/ping; then UP=1; break; fi
             sleep 1
           done
-          echo "app did not start"; exit 1
+          if [ "$UP" != "1" ]; then echo "app did not start"; exit 1; fi
+          echo " <- app is up"
+          STATE=$(curl -fs http://127.0.0.1:8765/api/state)
+          echo "$STATE" | python -c "import json,sys; d=json.load(sys.stdin); print('missing tools:', d['missing'])"
+          if [ "${{ matrix.bundle_ffmpeg }}" = "true" ]; then
+            echo "$STATE" | python -c "import json,sys; d=json.load(sys.stdin); sys.exit(1 if d['missing'] else 0)" || { echo "bundled build is missing tools"; exit 1; }
+          fi
+          curl -fs -X POST -d '{}' http://127.0.0.1:8765/api/quit || true
+          sleep 2
+          # فحص النافذة الحقيقية من داخل النسخة المجمّعة (exit code فقط، لأن النسخة بدون طرفية)
+          "$BIN" --selftest
+          echo "window selftest exit code: $?"
       - name: Package
         shell: bash
         run: |
