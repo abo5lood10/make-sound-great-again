@@ -445,9 +445,9 @@ class FrozenUpdateHelpers(unittest.TestCase):
         self.assertIsNone(updater._expected_hash(sums, "missing.zip"))
 
     def test_windows_script_has_all_parts(self):
-        text = updater._win_script(321, r"C:\new\App", r"C:\Users\Me\My App", "App.exe")
-        for needle in ('set "PID=321"', r'set "SRC=C:\new\App"', r'set "DST=C:\Users\Me\My App"', "robocopy",
-                       'start "" "%DST%\\%EXE%"', "tasklist"):
+        text = updater._win_script(321, r"C:\new\App", r"C:\Users\Me\It's App", "App.exe")
+        for needle in ("$waitPid = 321", r"$src = 'C:\new\App'", r"$dst = 'C:\Users\Me\It''s App'", "robocopy.exe",
+                       "Wait-Process", "Start-Process -FilePath"):
             self.assertIn(needle, text)
 
     @unittest.skipIf(os.name == "nt", "bash script")

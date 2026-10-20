@@ -156,30 +156,27 @@ def _expected_hash(sums_text, name):
 
 # ---------- النسخة الجاهزة (exe / app) ----------
 
+def _ps_quote(text):
+    return "'" + str(text).replace("'", "''") + "'"
+
+
 def _win_script(pid, src, dst, exe):
-    # ملاحظة: ما نستخدم timeout لأنه يفشل لما تكون الإدخال مُعاد توجيهه (البرنامج يشغّل السكربت بدون طرفية)،
-    # ونتجنب كتل ( ) لأن %var% داخلها يُقرأ قبل التنفيذ. نكتب كل خطوة في update.log للتشخيص.
+    """سكربت PowerShell (UTF-8 مع BOM عشان المسارات العربية): ينتظر خروج البرنامج، ينسخ الملفات، ويعيد التشغيل."""
     return "\r\n".join([
-        "@echo off", "chcp 65001 >nul",
-        f'set "PID={pid}"', f'set "SRC={src}"', f'set "DST={dst}"', f'set "EXE={exe}"',
-        'set "LOG=%~dp0update.log"',
-        'echo [%date% %time%] waiting for PID %PID% > "%LOG%"',
-        "set /a tries=0",
-        ":wait",
-        'tasklist /FI "PID eq %PID%" /NH 2>nul | findstr /C:" %PID% " >nul',
-        "if errorlevel 1 goto copy",
-        "set /a tries+=1",
-        "if %tries% GTR 90 goto copy",
-        "ping -n 2 127.0.0.1 >nul",
-        "goto wait",
-        ":copy",
-        'echo [%date% %time%] copying "%SRC%" to "%DST%" >> "%LOG%"',
-        'robocopy "%SRC%" "%DST%" /E /NFL /NDL /NJH /NJS /NP /R:20 /W:1 >> "%LOG%" 2>&1',
-        'echo robocopy exit code %errorlevel% >> "%LOG%"',
-        'start "" "%DST%\\%EXE%"',
-        'rd /s /q "%SRC%" >nul 2>nul',
-        'echo done >> "%LOG%"',
-        '(goto) 2>nul & del "%~f0"', ""])
+        "$ErrorActionPreference = 'Continue'",
+        f"$waitPid = {int(pid)}", f"$src = {_ps_quote(src)}", f"$dst = {_ps_quote(dst)}", f"$exe = {_ps_quote(exe)}",
+        "$log = Join-Path $PSScriptRoot 'update.log'",
+        'function Log($m) { Add-Content -LiteralPath $log -Value ("[{0}] {1}" -f (Get-Date -Format s), $m) -Encoding UTF8 }',
+        'Log "waiting for PID $waitPid"',
+        "try { Wait-Process -Id $waitPid -Timeout 90 -ErrorAction Stop } catch { Log \"wait: $($_.Exception.Message)\" }",
+        "Start-Sleep -Milliseconds 700",
+        'Log "copying $src -> $dst"',
+        "& robocopy.exe $src $dst /E /NFL /NDL /NJH /NJS /NP /R:20 /W:1 | Out-Null",
+        'Log "robocopy exit code $LASTEXITCODE"',
+        "Start-Process -FilePath (Join-Path $dst $exe)",
+        "Remove-Item -LiteralPath $src -Recurse -Force -ErrorAction SilentlyContinue",
+        'Log "done"',
+        "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue", ""])
 
 
 def _mac_script(pid, src, dst):
@@ -219,8 +216,13 @@ def apply_frozen():
             return {"ok": False, "error": "bad_checksum"}
         PROGRESS["state"] = "extract"
         new = work / "new"
-        with zipfile.ZipFile(zpath) as zf:
-            _safe_extract(zf, new)
+        if core.IS_MAC:
+            # ditto يحفظ الروابط الرمزية وصلاحيات التنفيذ (zipfile يفقدها وينكسر التطبيق)
+            new.mkdir()
+            subprocess.run(["ditto", "-x", "-k", str(zpath), str(new)], check=True)
+        else:
+            with zipfile.ZipFile(zpath) as zf:
+                _safe_extract(zf, new)
         zpath.unlink()
         pid = os.getpid()
         if core.IS_MAC:
@@ -237,15 +239,16 @@ def apply_frozen():
             dirs = [p for p in new.iterdir() if p.is_dir()]
             payload = dirs[0] if len(dirs) == 1 else new
             exe = Path(sys.executable)
-            script = work / "update.cmd"
-            script.write_bytes(_win_script(pid, payload, exe.parent, exe.name).encode("utf-8"))
-            subprocess.Popen(["cmd", "/c", str(script)], creationflags=0x00000008 | 0x00000200,
+            script = work / "update.ps1"
+            script.write_bytes(_win_script(pid, payload, exe.parent, exe.name).encode("utf-8-sig"))
+            subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                              "-File", str(script)], creationflags=0x00000008 | 0x00000200,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                              close_fds=True)
         print(f"update: swap script launched ({script})", flush=True)
         PROGRESS["state"] = "ready"
         return {"ok": True, "exit": True, "version": latest}
-    except (ValueError, zipfile.BadZipFile, KeyError):
+    except (ValueError, zipfile.BadZipFile, KeyError, subprocess.CalledProcessError):
         PROGRESS["state"] = "error"
         return {"ok": False, "error": "bad_archive"}
     except Exception as e:
