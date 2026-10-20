@@ -132,6 +132,8 @@ def _check():
             raise ValueError("version not found")
         out["latest"] = m.group(1)
         out["available"] = is_newer(m.group(1))
+        if FROZEN and core.IS_MAC:  # ما فيه نسخ ماك جاهزة جديدة حاليًا: ما نعرض تحديث يفشل
+            out["available"] = False
     except Exception:
         out["error"] = "network"
     return out

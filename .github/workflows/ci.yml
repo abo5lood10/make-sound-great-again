@@ -9,6 +9,8 @@ jobs:
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}   # ماك للفحص فقط، وخوادمه أحيانًا ما تتوفر
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

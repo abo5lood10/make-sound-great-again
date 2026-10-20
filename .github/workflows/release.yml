@@ -12,15 +12,12 @@ jobs:
   build:
     name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # خوادم ماك عند GitHub أحيانًا ما تتوفر لساعات: ما نخلي نسخة ويندوز تتعطل بسببها
-    continue-on-error: ${{ matrix.optional }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - { name: windows, os: windows-latest, sep: ";", icon: assets/icon.ico, bundle_ffmpeg: true, optional: false }
-          - { name: macos, os: macos-latest, sep: ":", icon: assets/icon.icns, bundle_ffmpeg: false, optional: true }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
