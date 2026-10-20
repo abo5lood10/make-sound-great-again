@@ -241,10 +241,17 @@ def apply_frozen():
             exe = Path(sys.executable)
             script = work / "update.ps1"
             script.write_bytes(_win_script(pid, payload, exe.parent, exe.name).encode("utf-8-sig"))
-            subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                              "-File", str(script)], creationflags=0x00000008 | 0x00000200,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-                             close_fds=True)
+            (work / "update.log").write_text("launched by the app\n", encoding="utf-8")
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                   "-File", str(script)]
+            # CREATE_NO_WINDOW (مو DETACHED_PROCESS: powershell يحتاج كونسول) + مجموعة عمليات جديدة،
+            # ومحاولة الخروج من job object (لو الـ job يسمح) عشان السكربت يعيش بعد ما نقفل.
+            base_flags = 0x08000000 | 0x00000200
+            kw = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, close_fds=True)
+            try:
+                subprocess.Popen(cmd, creationflags=base_flags | 0x01000000, **kw)
+            except OSError:
+                subprocess.Popen(cmd, creationflags=base_flags, **kw)
         print(f"update: swap script launched ({script})", flush=True)
         PROGRESS["state"] = "ready"
         return {"ok": True, "exit": True, "version": latest}
