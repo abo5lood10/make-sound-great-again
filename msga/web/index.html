@@ -16,6 +16,10 @@
   </button>
 </header>
 
+<nav id="tabs" class="tabs">
+  <div class="seg" id="tabSeg"><button data-v="main" data-i18n="tab_enhance"></button><button data-v="player" data-i18n="tab_player"></button></div>
+</nav>
+
 <!-- ===== الصفحة الرئيسية ===== -->
 <main id="main" class="view">
   <div class="brand">
@@ -29,6 +33,7 @@
 
   <section class="card pad">
     <textarea id="urls" rows="3" dir="ltr" spellcheck="false" data-i18n-ph="url_placeholder"></textarea>
+    <div class="sub url-hint" data-i18n="url_hint"></div>
     <div class="paste-row"><button id="pasteBtn" class="link" data-i18n="paste_link"></button><span id="pasteHint" class="sub"></span></div>
   </section>
 
@@ -86,6 +91,31 @@
   <p id="outInfo" class="sub path"></p>
 </main>
 
+<!-- ===== المشغّل ===== -->
+<main id="player" class="view" hidden>
+  <section class="card pad now">
+    <div class="np">
+      <div class="np-art"><img id="npCover" alt="" hidden><div id="npIcon" class="np-icon">♪</div></div>
+      <div class="np-text"><div id="npTitle" class="np-title"></div><div id="npArtist" class="sub"></div></div>
+    </div>
+    <input type="range" id="seek" min="0" max="1000" value="0" aria-label="seek">
+    <div class="times"><span id="tCur">0:00</span><span id="tDur">0:00</span></div>
+    <div class="ctrls">
+      <button id="btnShuffle" class="ctl" aria-label="shuffle">🔀</button>
+      <button id="btnPrev" class="ctl big" aria-label="previous">⏮</button>
+      <button id="btnPlay" class="play-btn" aria-label="play">▶</button>
+      <button id="btnNext" class="ctl big" aria-label="next">⏭</button>
+      <button id="btnRepeat" class="ctl" aria-label="repeat">🔁</button>
+    </div>
+    <div class="vol"><span>🔈</span><input type="range" id="vol" min="0" max="100" value="80" aria-label="volume"></div>
+  </section>
+  <div class="pick-row"><button id="plFiles" class="tint" data-i18n="pl_files"></button><button id="plFolder" class="tint" data-i18n="pl_folder"></button><button id="plClear" class="link" data-i18n="pl_clear"></button></div>
+  <input type="file" id="plInput" multiple accept="audio/*,video/*" hidden>
+  <div id="plEmpty" class="empty"><div data-i18n="pl_empty"></div><div class="sub" data-i18n="pl_formats"></div></div>
+  <ol id="queue" class="queue"></ol>
+  <audio id="audio" preload="auto"></audio>
+</main>
+
 <!-- ===== الإعدادات ===== -->
 <main id="settings" class="view" hidden>
   <button id="back" class="link back"></button>
@@ -98,6 +128,8 @@
       <div class="seg" id="themeSeg"><button data-v="system" data-i18n="th_system"></button><button data-v="light" data-i18n="th_light"></button><button data-v="dark" data-i18n="th_dark"></button></div></div>
     <div class="row"><div><span data-i18n="light_mode"></span><div class="sub" data-i18n="light_hint"></div></div>
       <label class="switch"><input type="checkbox" id="lightMode"><i></i></label></div>
+    <div class="row"><div><span data-i18n="keep_orig_label"></span><div class="sub" data-i18n="keep_orig_hint"></div></div>
+      <label class="switch"><input type="checkbox" id="keepOrig"><i></i></label></div>
     <div class="row"><div><span data-i18n="notify_label"></span><div class="sub" data-i18n="notify_hint"></div></div>
       <label class="switch"><input type="checkbox" id="notifyOn"><i></i></label></div>
   </section>

@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from . import core, picker, updater
+from . import core, picker, spotify, updater
 from .version import APP_NAME, VERSION
 
 HOST = "127.0.0.1"
@@ -27,6 +27,9 @@ HISTORY_MAX = 50
 FINAL = ("done", "error", "cancelled")
 
 mimetypes.add_type("font/ttf", ".ttf")
+for _ext, _mime in ((".m4a", "audio/mp4"), (".flac", "audio/flac"), (".opus", "audio/ogg"), (".aac", "audio/aac"),
+                    (".mp3", "audio/mpeg"), (".wav", "audio/wav"), (".ogg", "audio/ogg"), (".weba", "audio/webm")):
+    mimetypes.add_type(_mime, _ext)
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("image/svg+xml", ".svg")
 
@@ -56,6 +59,9 @@ class State:
         self.httpd = None
         self.finished_batch = 0
         self.spec_lock = threading.Lock()
+        self.queue = []          # ترتيب المشغّل (قائمة معرّفات)
+        self.tracks = {}         # id -> track dict
+        self.tc_locks = {}       # قفل لكل ملف أثناء التحويل المؤقت
 
     def get_executor(self, jobs):
         if self.executor is None or jobs != self.executor_jobs:
@@ -243,19 +249,34 @@ def run_item(it):
         maybe_notify()
 
 
+def looks_like_playlist(url):
+    """قوائم يوتيوب (playlist?list=) وساوندكلاود (/sets/) نكتشفها تلقائيًا. رابط فيديو داخل قائمة يبقى فيديو."""
+    u = str(url).lower()
+    return ("youtube.com/playlist" in u or "/sets/" in u or "music.youtube.com/playlist" in u
+            or ("list=" in u and "v=" not in u and "youtu" in u))
+
+
 def run_playlist(it, jobs):
     it.update(status="running", stage_key="reading_playlist")
+    src, children = it["_source"], []
     try:
-        urls = core.expand_playlist(it["_source"])
+        if spotify.is_spotify(src):
+            for t in spotify.fetch(src)["tracks"]:
+                name = spotify.display_name(t)
+                o = dict(it["_opts"], name=core.safe_stem(name), duration_ms=t["duration_ms"],
+                         meta={"title": t["title"], "artist": t["artist"], "album": t["album"]})
+                children.append((name, spotify.search_source(t), o))
+        else:
+            for u in core.expand_playlist(src):
+                children.append((u, u, dict(it["_opts"])))
     except core.EnhanceError as e:
         it.update(status="error", error=error_dict(e))
         return
     with STATE.lock:
         if it in STATE.items:
             STATE.items.remove(it)
-    for u in urls:
-        submit_item(STATE.new_item(u, "url", source=u, opts=dict(it["_opts"]), req=request_key(it["_opts"]),
-                                   src_url=u), jobs)
+    for label, source, o in children:
+        submit_item(STATE.new_item(label, "url", source=source, opts=o, req=request_key(o), src_url=source), jobs)
 
 
 def submit_item(it, jobs):
@@ -357,6 +378,37 @@ def open_folder(path):
         subprocess.Popen(["xdg-open", str(path)])
 
 
+def public_track(t):
+    return {"id": t["id"], "name": t["name"], "ext": t["ext"], "title": t.get("title"), "artist": t.get("artist"),
+            "album": t.get("album"), "duration": t.get("duration"), "has_cover": t.get("has_cover")}
+
+
+def player_state():
+    return {"tracks": [public_track(STATE.tracks[i]) for i in STATE.queue if i in STATE.tracks]}
+
+
+def player_add(paths, append=False, only_new=True):
+    """يسجّل ملفات (أو مجلدات) في قائمة المشغّل. يرجع معرّف آخر ملف أُضيف."""
+    import hashlib
+    if not append:
+        STATE.queue.clear()
+        STATE.tracks.clear()
+    last = None
+    for f in core.collect_media(paths):
+        tid = hashlib.sha1(str(f).encode("utf-8")).hexdigest()[:10]
+        if tid in STATE.tracks and only_new and append:
+            last = tid
+            continue
+        STATE.tracks.setdefault(tid, {"id": tid, "path": str(f), "name": f.stem, "ext": f.suffix.lower().lstrip(".")})
+        if tid not in STATE.queue or not only_new:
+            if tid in STATE.queue and not only_new:
+                last = tid
+                continue
+            STATE.queue.append(tid)
+        last = tid
+    return last
+
+
 class QuietServer(ThreadingHTTPServer):
     """النافذة أحيانًا تقطع الاتصال في نص الرد (طبيعي): ما نطبع أخطاء الاتصال المقطوع."""
 
@@ -412,7 +464,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             self._serve_file(core.WEB_DIR, "index.html", cache=False)
         elif path.startswith("/static/"):
-            self._serve_file(core.WEB_DIR, unquote(path[8:]))
+            name = unquote(path[8:])
+            # js/css لازم تتحدّث مع كل إصدار (كاش طويل يخلي الواجهة القديمة تبقى بعد التحديث)؛ الخطوط والصور كاش طويل
+            self._serve_file(core.WEB_DIR, name, cache=name.endswith((".ttf", ".svg", ".png")))
         elif path.startswith("/files/"):
             self._serve_file(Path(core.load_config()["out"]), unquote(path[7:]), cache=False)
         elif path.startswith("/orig/"):
@@ -422,6 +476,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._serve_file(p.parent, p.name, cache=False)
             else:
                 self.send_error(404)
+        elif path.startswith("/play/"):
+            self._play(unquote(path[6:]), parse_qs(url.query))
+        elif path == "/api/player/tracks":
+            self._json(player_state())
+        elif path == "/api/player/meta":
+            self._player_meta(parse_qs(url.query))
+        elif path == "/api/player/cover":
+            self._player_cover(parse_qs(url.query))
         elif path == "/api/tags":
             self._get_tags(parse_qs(url.query))
         elif path == "/api/update/progress":
@@ -487,6 +549,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/update/ytdlp": self._upd_ytdlp, "/api/ytdlp/version": self._ytdlp_version,
             "/api/restart": self._restart, "/api/quit": self._quit,
             "/api/pick": self._pick, "/api/submit_paths": self._submit_paths, "/api/tags": self._set_tags,
+            "/api/player/open": self._player_open, "/api/player/paths": self._player_paths,
+            "/api/player/add_item": self._player_add_item, "/api/player/clear": self._player_clear,
         }
         fn = routes.get(path)
         if fn:
@@ -517,7 +581,7 @@ class Handler(BaseHTTPRequestHandler):
         if lufs not in core.LUFS_CHOICES:
             return None
         return {"preset": preset, "format": fmt, "out_dir": cfg["out"], "light": cfg["light"],
-                "bass": bass, "treble": treble, "lufs": lufs}, cfg["jobs"]
+                "bass": bass, "treble": treble, "lufs": lufs, "keep_original": cfg["keep_original"]}, cfg["jobs"]
 
     def _submit(self, d):
         parsed = self._opts(d)
@@ -526,10 +590,10 @@ class Handler(BaseHTTPRequestHandler):
         opts, jobs = parsed
         added = 0
         for u in d.get("urls", []):
-            if not core.is_url(u):
+            if not core.is_url(u) and not spotify.is_spotify(u):
                 continue
             req = request_key(opts)
-            if d.get("playlist"):
+            if d.get("playlist") or spotify.is_spotify(u) or looks_like_playlist(u):
                 it = STATE.new_item(u, "playlist", source=u, opts=dict(opts), req=req, src_url=u)
                 it["_future"] = STATE.get_executor(jobs).submit(run_playlist, it, jobs)
             else:
@@ -575,7 +639,7 @@ class Handler(BaseHTTPRequestHandler):
         if left:
             dest.unlink()
             return self._json({"error": "incomplete"}, 400)
-        o = dict(opts, name=stem, keep_original=True)
+        o = dict(opts, name=stem)
         it = STATE.new_item(name, "file", source=str(dest), opts=o, req=request_key(opts))
         it["_cleanup"] = str(dest)  # نحذفه لما ينجح (ونبقيه لو فشل عشان "إعادة المحاولة")
         submit_item(it, jobs)
@@ -667,6 +731,82 @@ class Handler(BaseHTTPRequestHandler):
     def _restart(self, _d):
         self._json({"ok": True})
         threading.Thread(target=restart_app, daemon=True).start()
+
+    # ---- المشغّل ----
+    def _player_open(self, d):
+        kind = "folder" if d.get("kind") == "folder" else "files"
+        try:
+            paths = picker.pick(kind)
+        except Exception:
+            paths = None
+        if paths is None:
+            return self._json({"error": "no_dialog"}, 501)
+        if paths:
+            player_add(paths, append=bool(d.get("append")))
+        self._json(player_state())
+
+    def _player_paths(self, d):
+        player_add([p for p in d.get("paths", []) if isinstance(p, str)], append=bool(d.get("append")))
+        self._json(player_state())
+
+    def _player_add_item(self, d):
+        it = STATE.find(d.get("id", ""))
+        p = it["_paths"].get("e") if it else None
+        if not p or not Path(p).is_file():
+            return self._json({"error": "not_found"}, 404)
+        before = len(STATE.queue)
+        tid = player_add([p], append=True, only_new=False)
+        state = player_state()
+        state["index"] = STATE.queue.index(tid) if tid in STATE.queue else max(0, before)
+        self._json(state)
+
+    def _player_clear(self, _d):
+        STATE.queue.clear()
+        STATE.tracks.clear()
+        self._json(player_state())
+
+    def _player_meta(self, q):
+        t = STATE.tracks.get((q.get("id") or [""])[0])
+        if not t:
+            return self._json({"error": "not_found"}, 404)
+        if not t.get("meta_loaded"):
+            try:
+                core.set_light(core.load_config()["light"])
+                tags = core.read_tags(t["path"])
+                t.update(title=tags["title"] or None, artist=tags["artist"] or None, album=tags["album"] or None,
+                         has_cover=tags["has_cover"], duration=core.media_duration(t["path"]))
+            except core.EnhanceError:
+                pass
+            t["meta_loaded"] = True
+        self._json(public_track(t))
+
+    def _player_cover(self, q):
+        t = STATE.tracks.get((q.get("id") or [""])[0])
+        img = None
+        if t and Path(t["path"]).is_file():
+            core.set_light(core.load_config()["light"])
+            img = core.extract_cover_image(t["path"])
+        if not img:
+            return self.send_error(404)
+        self._serve_file(core.play_cache_dir(), img.name)
+
+    def _play(self, tid, q):
+        """يقدّم الملف مباشرة، أو (للصيغ اللي المتصفح ما يشغّلها) نسخة MP3 مؤقتة تقبل التقديم والتأخير."""
+        t = STATE.tracks.get(tid)
+        if not t or not Path(t["path"]).is_file():
+            return self.send_error(404)
+        p = Path(t["path"])
+        if (q.get("mode") or [""])[0] == "transcode":
+            key = str(p)
+            lock = STATE.tc_locks.setdefault(key, threading.Lock())
+            with lock:  # نفس الملف ما ينحوّل مرتين
+                try:
+                    core.set_light(core.load_config()["light"])
+                    out = core.transcode_for_play(p)
+                except core.EnhanceError:
+                    return self.send_error(500)
+            return self._serve_file(out.parent, out.name, cache=False)
+        self._serve_file(p.parent, p.name, cache=False)
 
     # ---- اختيار ملفات / مجلدات ومعالجتها من مكانها (بدون نسخ) ----
     def _pick(self, d):

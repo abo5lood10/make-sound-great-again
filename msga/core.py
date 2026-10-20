@@ -62,7 +62,7 @@ DEFAULT_OUT = str(Path.home() / "Music" / "Make Sound Great Again")
 DEFAULT_CONFIG = {"preset": "auto", "format": "flac", "jobs": 1, "out": DEFAULT_OUT,
                   "lang": "ar", "theme": "system", "light": True,
                   "bass": 0, "treble": 0, "notify": True, "auto_check": True,
-                  "lufs": -14, "watch": "", "watch_on": False}
+                  "lufs": -14, "watch": "", "watch_on": False, "keep_original": False}
 LUFS_CHOICES = (0, -9, -11, -14, -16)  # 0 = بدون تطبيع
 
 # ملاحظة: كل النماذج تنتهي بتطبيع مستوى الصوت (مرحلتين) وlimiter عشان ما يصير تشويه.
@@ -161,6 +161,9 @@ MESSAGES = {
     "err_noaudio": ("الملف ما فيه صوت.", "The file has no audio."),
     "err_model": ("ملف موديل الذكاء الاصطناعي ناقص: {name}", "The AI model file is missing: {name}"),
     "err_tags": ("تعذّر حفظ البيانات (التاغات) في هذا الملف", "Couldn't save the tags into this file"),
+    "err_nomatch": ("ما لقيت هذي الأغنية في يوتيوب", "Couldn't find this song on YouTube"),
+    "err_spotify": ("تعذّر قراءة رابط سبوتيفاي (تأكد إنه رابط أغنية أو ألبوم أو قائمة عامة)",
+                    "Couldn't read this Spotify link (it must be a public song, album or playlist)"),
     "err_cancelled": ("تم الإلغاء", "Cancelled"),
     "err_notfound": ("ما لقيت الملف: {source}", "File not found: {source}"),
     # أسباب تقدير الجودة
@@ -212,7 +215,7 @@ def sanitize_config(cfg):
         out["lang"] = cfg["lang"]
     if cfg.get("theme") in ("system", "light", "dark"):
         out["theme"] = cfg["theme"]
-    for key in ("light", "notify", "auto_check"):
+    for key in ("light", "notify", "auto_check", "keep_original"):
         if isinstance(cfg.get(key), bool):
             out[key] = cfg[key]
     if cfg.get("lufs") in LUFS_CHOICES:
@@ -339,6 +342,25 @@ def is_url(s):
     return str(s).startswith(("http://", "https://"))
 
 
+def is_remote(s):
+    """رابط، أو بحث يوتيوب (ytsearch) نستخدمه لأغاني سبوتيفاي."""
+    return is_url(s) or str(s).startswith("ytsearch")
+
+
+def http_get(url, headers=None, timeout=20):
+    """طلب GET بسيط (بدون مكتبات). يرجع bytes."""
+    import ssl
+    import urllib.request
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = ssl.create_default_context()
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (MakeSoundGreatAgain)", **(headers or {})})
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+        return r.read()
+
+
 def safe_stem(name):
     s = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", name).strip(" .")
     return (s or "song")[:120]
@@ -381,15 +403,21 @@ def expand_playlist(url):
     return urls or [url]
 
 
-def download(url, dest, cb, token=None):
+def download(url, dest, cb, token=None, match_filter=None):
     """ينزّل أعلى جودة صوت بالصيغة الأصلية (بدون تحويل) مع الغلاف والبيانات. يرجع (الملف، الغلاف|None)."""
     cmd = [
         *ytdlp_cmd(), "--no-playlist", "-f", "bestaudio/best", "--encoding", "utf-8",
         "--embed-metadata", "--write-thumbnail", "--convert-thumbnails", "jpg",
         "--newline", "--progress-template", "download:%(progress._percent_str)s",
         "-o", str(Path(dest) / "%(title).120B.%(ext)s"),
-        "--print", "after_move:filepath", "--no-simulate", "--no-warnings", url,
+        "--print", "after_move:filepath", "--no-simulate", "--no-warnings",
     ]
+    searching = str(url).startswith("ytsearch")
+    if searching:  # أغاني سبوتيفاي: نأخذ أول نتيجة تنطبق عليها الشروط
+        cmd += ["--max-downloads", "1"]
+        if match_filter:
+            cmd += ["--match-filter", match_filter]
+    cmd.append(url)
     filepath = None
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
         p = popen(cmd, token, stdout=subprocess.PIPE, stderr=err)
@@ -406,10 +434,10 @@ def download(url, dest, cb, token=None):
         errtext = err.read()
     if token is not None:
         token.check()
-    if p.returncode != 0:
+    if p.returncode not in (0, 101):  # 101 = وصلنا حد --max-downloads (نجاح)
         raise translate_ytdlp_error(errtext)
     if not filepath or not Path(filepath).exists():
-        raise EnhanceError("err_nofile")
+        raise EnhanceError("err_nomatch" if searching else "err_nofile")
     src = Path(filepath)
     thumb = src.with_suffix(".jpg")
     return src, (thumb if thumb.exists() else None)
@@ -545,7 +573,7 @@ def process_item(source, opts, cb=lambda stage, frac: None):
           bass / treble (dB من -6 إلى 6)، token (CancelToken)، original_override (مسار النسخة الأصلية للمقارنة).
     cb(stage_key, frac): تقدّم عام من 0 إلى 1 (stage_key مفتاح في MESSAGES).
     """
-    remote = is_url(source)
+    remote = is_remote(source)
     check_tools(need_download=remote)
     set_light(opts.get("light", True))
     preset_opt = opts.get("preset", "auto")
@@ -568,13 +596,27 @@ def process_item(source, opts, cb=lambda stage, frac: None):
         base = 0.0
         if remote:
             cb("st_download", 0.0)
+            mf = None
+            if opts.get("duration_ms"):  # نفضّل نتيجة بنفس مدة أغنية سبوتيفاي (±20 ثانية): نتجنب النسخ الحية والمقاطع
+                sec = int(opts["duration_ms"]) // 1000
+                mf = f"duration >= {max(1, sec - 20)} & duration <= {sec + 20}"
+
+            def fetch(filt):
+                return download(source, tmp, sub(cb, "st_download", 0.0, 0.3), token, filt)
+
             try:
-                src, cover = download(source, tmp, sub(cb, "st_download", 0.0, 0.3), token)
+                try:
+                    src, cover = fetch(mf)
+                except EnhanceError as e:
+                    if e.key == "err_nomatch" and mf:  # ما فيه نتيجة بنفس المدة: نقبل أول نتيجة
+                        src, cover = fetch(None)
+                    else:
+                        raise
             except EnhanceError as e:
                 # فشل التنزيل غالبًا سببه تغيير في الموقع: نحدّث yt-dlp مرة ونعيد المحاولة
                 if e.key in ENGINE_RETRY and _engine_updater and _engine_updater():
                     cb("st_engine", 0.0)
-                    src, cover = download(source, tmp, sub(cb, "st_download", 0.0, 0.3), token)
+                    src, cover = fetch(mf)
                 else:
                     raise
             base = 0.3
@@ -640,7 +682,11 @@ def process_item(source, opts, cb=lambda stage, frac: None):
                      "-disposition:v", "attached_pic"]
         else:
             args += ["-vn", "-map", "0:a:0"]
-        args += ["-map_metadata", "0", "-af", final_chain, *CODECS[fmt], str(out)]
+        args += ["-map_metadata", "0"]
+        for k, v in (opts.get("meta") or {}).items():  # بيانات من سبوتيفاي (العنوان / الفنان / الألبوم)
+            if k in TAG_KEYS and v:
+                args += ["-metadata", f"{k}={v}"]
+        args += ["-af", final_chain, *CODECS[fmt], str(out)]
         text = run_ffmpeg(args, dur, sub(cb, "st_process", t(0.45), t(0.97)), token, cwd)
         after = parse_loudnorm_json(text) or {}
         if not ln:  # بدون تطبيع ما فيه قياس جاهز: نقيس الناتج للتقرير
@@ -716,7 +762,8 @@ def read_tags(path):
         if s.get("codec_type") == "audio":
             for k, v in (s.get("tags") or {}).items():
                 tags.setdefault(k.lower(), v)
-    has_cover = any(s.get("codec_type") == "video" for s in j.get("streams", []))
+    has_cover = any(s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic")
+                    for s in j.get("streams", []))  # غلاف فعلي فقط (مو إطار فيديو)
     return {**{k: tags.get(k, "") for k in TAG_KEYS}, "has_cover": has_cover}
 
 
@@ -749,6 +796,68 @@ def write_tags(path, tags, cover=None):
                 tmp.unlink()
             except OSError:
                 pass
+
+
+# ---------- المشغّل: تحويل مؤقت للصيغ اللي المتصفح ما يشغّلها + أغلفة ----------
+BROWSER_SAFE = {"mp3", "m4a", "aac", "wav", "ogg", "opus", "flac", "mp4", "webm", "weba"}
+
+
+def play_cache_dir():
+    d = config_dir() / "play_cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _cache_key(path):
+    import hashlib
+    p = Path(path)
+    st = p.stat()
+    return hashlib.sha1(f"{p.resolve()}|{st.st_mtime_ns}|{st.st_size}".encode()).hexdigest()[:20]
+
+
+def transcode_for_play(src):
+    """ينسخ الصوت إلى MP3 مؤقت (يقبل Range فيقدر المستخدم يقفز داخل الأغنية). يرجع مسار الملف."""
+    out = play_cache_dir() / f"{_cache_key(src)}.mp3"
+    if out.exists():
+        return out
+    tmp = out.with_suffix(".part.mp3")
+    run_ffmpeg(["-i", str(src), "-vn", "-map", "0:a:0", "-c:a", "libmp3lame", "-q:a", "3", "-id3v2_version", "3",
+                "-map_metadata", "-1", str(tmp)])
+    os.replace(tmp, out)
+    prune_play_cache()
+    return out
+
+
+def prune_play_cache(max_bytes=1 << 30):
+    files = sorted((f for f in play_cache_dir().iterdir() if f.is_file()), key=lambda f: f.stat().st_mtime)
+    total = sum(f.stat().st_size for f in files)
+    for f in files:
+        if total <= max_bytes:
+            break
+        try:
+            total -= f.stat().st_size
+            f.unlink()
+        except OSError:
+            pass
+
+
+def extract_cover_image(src):
+    """غلاف مدمج داخل الملف كصورة jpg (مخزّنة مؤقتًا). يرجع المسار أو None."""
+    out = play_cache_dir() / f"{_cache_key(src)}.cover.jpg"
+    if out.exists():
+        return out if out.stat().st_size else None
+    r = run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-an", "-map", "0:v:0", "-frames:v", "1", str(out)])
+    if r.returncode != 0 or not out.exists():
+        out.write_bytes(b"")  # نتذكر إن ما فيه غلاف
+        return None
+    return out
+
+
+def media_duration(path):
+    try:
+        return probe(path)["duration"]
+    except EnhanceError:
+        return None
 
 
 def spectrogram(src, out_png):

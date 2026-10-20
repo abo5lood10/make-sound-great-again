@@ -165,3 +165,32 @@ audio { width: 100%; margin-top: 10px; }
 .tags label { display: grid; gap: 2px; font-size: 12px; color: var(--sub); }
 .tags input[type=text] { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; color: var(--text); font: inherit; }
 .tags .inline { flex-wrap: wrap; }
+
+/* ===== تبويبات + مشغّل ===== */
+.tabs { display: flex; justify-content: center; padding: 6px 20px 12px; }
+.tabs .seg button { padding: 5px 22px; font-size: 14px; }
+.url-hint { margin-top: 4px; font-size: 12px; }
+.now { padding: 16px; }
+.np { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+.np-art { width: 84px; height: 84px; flex: none; border-radius: 12px; overflow: hidden; background: linear-gradient(135deg, #7c3aed, #ec4899); display: grid; place-items: center; }
+.np-art img { width: 100%; height: 100%; object-fit: cover; }
+.np-icon { font-size: 38px; color: #fff; }
+.np-text { min-width: 0; }
+.np-title { font-weight: 700; font-size: 17px; word-break: break-word; }
+#seek, #vol { width: 100%; accent-color: var(--blue); }
+.times { display: flex; justify-content: space-between; font-size: 12px; color: var(--sub); direction: ltr; }
+.ctrls { display: flex; justify-content: center; align-items: center; gap: 14px; margin: 8px 0; direction: ltr; }
+.ctl { background: transparent; border: 0; font-size: 20px; border-radius: 50%; width: 42px; height: 42px; opacity: .65; }
+.ctl.big { font-size: 26px; opacity: 1; }
+.ctl.on { opacity: 1; background: color-mix(in srgb, var(--blue) 18%, transparent); }
+.ctl:hover { background: var(--fill); }
+.play-btn { width: 60px; height: 60px; border-radius: 50%; border: 0; background: var(--blue); color: #fff; font-size: 26px; }
+.play-btn:hover { filter: brightness(1.1); }
+.vol { display: flex; align-items: center; gap: 8px; max-width: 260px; margin: 4px auto 0; direction: ltr; }
+.queue { list-style: none; margin: 0; padding: 0; }
+.queue li { display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 10px; cursor: pointer; }
+.queue li:hover { background: var(--fill); }
+.queue li.cur { background: color-mix(in srgb, var(--blue) 14%, transparent); font-weight: 600; }
+.queue .n { color: var(--sub); min-width: 26px; font-size: 13px; text-align: center; }
+.queue .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue .d { color: var(--sub); font-size: 12px; direction: ltr; }

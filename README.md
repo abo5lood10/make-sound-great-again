@@ -21,6 +21,8 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 - **Spectrogram** (before / after) to *see* what changed, not just hear it.
 - Formats: **FLAC, MP3 320, M4A (AAC 256), Opus 192, WAV 24-bit**.
 - **Notification** when everything is done; paste a link from the clipboard; `Ctrl+Enter` to start.
+- **Paste any link in the box**: YouTube, TikTok, SoundCloud, Instagram, and **Spotify songs, albums and playlists**. Playlists are detected automatically; everything is downloaded as audio only, enhanced and saved into the folder you chose in Settings. (Spotify's own audio is protected, so for Spotify links the app reads the song names from the public page and downloads each song from YouTube, picking the result with the same length. Public Spotify pages list up to about 50-100 songs of a long playlist.) By default only the enhanced audio is kept (no second "original" copy), to save disk space.
+- **Built-in player** (second tab): open files or a folder from your computer and it plays everything in order, with previous / next, seek, volume, shuffle and repeat. Plays **every format** (formats the system can't play natively are converted on the fly with ffmpeg) and **videos play their audio only**.
 - **Choose files or a whole folder** from the system dialog: songs are processed in place (your originals are never copied or moved), videos are turned into audio.
 - **Watch a folder**: new songs dropped into it are enhanced automatically (existing files are left alone).
 - **Edit tags** (title / artist / album) and **change the cover** of a finished song, without re-encoding.
