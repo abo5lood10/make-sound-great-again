@@ -560,6 +560,17 @@ class PlayerAPI(unittest.TestCase):
         self.assertEqual(json.loads(raw)["tracks"], [])
 
 
+class ErrorSummary(unittest.TestCase):
+    def test_picks_real_error_lines_not_stream_info(self):
+        text = ("Input #0, flac\nStream #0:0: Audio: flac\n[arnndn @ 000] Error opening model: No such file\n"
+                "Error initializing filter 'arnndn' with args 'm=x'\nOutput #0, null\n"
+                "Stream #0:0(eng): Audio: pcm_s16le, 192000 Hz\nMetadata:\nencoder : Lavc63")
+        out = core._ffmpeg_error_summary(text)
+        self.assertIn("Error opening model", out)
+        self.assertNotIn("pcm_s16le", out)
+        self.assertEqual(core._ffmpeg_error_summary("a\nb\nc\nd"), "b | c | d")
+
+
 class Startup(unittest.TestCase):
     def test_starts_with_legacy_windows_console_encoding(self):
         """ويندوز: طرفية cp1252 ما تقدر تكتب حروف مثل السهم، والبرنامج ما لازم ينهار منها."""

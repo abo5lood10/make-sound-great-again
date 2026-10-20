@@ -108,11 +108,11 @@ PRESETS = {
     # ذكاء اصطناعي خفيف (RNNoise عبر فلتر arnndn في ffmpeg): ما يُختار تلقائيًا، فقط لو اخترته
     "ai_music": [  # موديل mp: صوت عام مع ضوضاء عامة. mix يخلّط مع الأصل عشان ما يضر الآلات
         "highpass=f=20",
-        "arnndn=m=mp.rnnn:mix=0.85",
+        "aresample=48000", "arnndn=m=mp.rnnn:mix=0.85",
     ],
     "ai_voice": [  # موديل bd: كلام مع ضوضاء تسجيل (مقاطع تيكتوك / انستا اللي فيها شخص يتكلم)
         "highpass=f=70",
-        "arnndn=m=bd.rnnn",
+        "aresample=48000", "arnndn=m=bd.rnnn",
         "equalizer=f=3000:t=q:w=1:g=2",
     ],
 }
@@ -445,6 +445,17 @@ def download(url, dest, cb, token=None, match_filter=None):
 
 # ---------- ffmpeg ----------
 
+_ERR_WORDS = re.compile(r"error|fail|invalid|no such|cannot|can't|unable|not found|unknown|unsupported|incorrect|"
+                        r"unrecognized|not supported|permission|denied|exceed", re.I)
+
+
+def _ffmpeg_error_summary(text):
+    """سطور الخطأ الفعلية من ffmpeg (مو معلومات الملف في الآخر)، وإلا آخر السطور."""
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    hits = [ln for ln in lines if _ERR_WORDS.search(ln) and not ln.startswith(("Stream #", "Metadata"))]
+    return " | ".join((hits[-3:] or lines[-3:]))[:600]
+
+
 def run_ffmpeg(args, duration=None, cb=None, token=None, cwd=None):
     """يشغّل ffmpeg مع تقدّم. يرجع نص stderr."""
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
@@ -463,8 +474,7 @@ def run_ffmpeg(args, duration=None, cb=None, token=None, cwd=None):
     if token is not None:
         token.check()
     if p.returncode != 0:
-        tail = [ln for ln in text.strip().splitlines() if ln.strip()][-3:]
-        raise EnhanceError("err_ffmpeg", tail=" | ".join(tail))
+        raise EnhanceError("err_ffmpeg", tail=_ffmpeg_error_summary(text))
     return text
 
 
