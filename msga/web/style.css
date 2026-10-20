@@ -159,3 +159,9 @@ audio { width: 100%; margin-top: 10px; }
 .spec figure { margin: 6px 0; }
 .spec figcaption { font-size: 12px; color: var(--sub); margin-bottom: 2px; }
 .spec img { width: 100%; height: auto; border-radius: 8px; display: block; background: #000; }
+
+.pick-row { display: flex; gap: 8px; flex-wrap: wrap; margin: -2px 0 12px; }
+.tags { margin-top: 8px; padding: 10px; background: var(--fill); border-radius: 10px; display: grid; gap: 8px; }
+.tags label { display: grid; gap: 2px; font-size: 12px; color: var(--sub); }
+.tags input[type=text] { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; color: var(--text); font: inherit; }
+.tags .inline { flex-wrap: wrap; }

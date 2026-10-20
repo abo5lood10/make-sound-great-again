@@ -1,7 +1,14 @@
-"""تحديث البرنامج من GitHub (بدون أي مكتبات خارجية) + تحديث محرك التنزيل yt-dlp."""
+"""تحديث البرنامج من GitHub (بدون أي مكتبات خارجية) + تحديث محرك التنزيل yt-dlp.
+
+- تثبيت من الكود (git / zip): ينسخ ملفات الإصدار الجديد فوق القديمة.
+- نسخة جاهزة (exe / app): ينزّل zip الإصدار الجديد، يتحقق من SHA-256، يفكّه، ثم يشغّل سكربت صغير يستبدل ملفات
+  البرنامج بعد ما يقفل ويعيد تشغيله (ما يمكن استبدال exe وهو شغّال).
+"""
+import hashlib
 import io
 import os
 import re
+import shlex
 import shutil
 import ssl
 import subprocess
@@ -15,13 +22,15 @@ from pathlib import Path
 from . import core
 from .version import GITHUB_REPO, VERSION
 
-FROZEN = bool(getattr(sys, "frozen", False))  # نسخة مجمّعة (exe / app): ما تنحدّث بنسخ الملفات
+FROZEN = bool(getattr(sys, "frozen", False))  # نسخة مجمّعة (exe / app)
 PLACEHOLDER = "YOUR_GITHUB_USERNAME"
 CHECK_TTL = 6 * 3600
 ENGINE_COOLDOWN = 12 * 3600
 _check_cache = {"t": 0.0, "value": None}
 _engine_last = {"t": 0.0}
 SKIP_NAMES = {".git", "__pycache__", ".github"}
+ASSET = "Make-Sound-Great-Again-macos.zip" if core.IS_MAC else "Make-Sound-Great-Again-windows.zip"
+PROGRESS = {"state": "idle", "done": 0, "total": 0}
 
 
 def parse_version(s):
@@ -42,10 +51,28 @@ def _ssl_context():
         return ssl.create_default_context()
 
 
+def _request(url):
+    return urllib.request.Request(url, headers={"User-Agent": "MakeSoundGreatAgain-updater"})
+
+
 def _get(url, timeout=15):
-    req = urllib.request.Request(url, headers={"User-Agent": "MakeSoundGreatAgain-updater"})
-    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
+    with urllib.request.urlopen(_request(url), timeout=timeout, context=_ssl_context()) as r:
         return r.read()
+
+
+def _download(url, dest, timeout=60):
+    """تنزيل بالتدريج مع تقدّم. يرجع SHA-256 للملف."""
+    h = hashlib.sha256()
+    with urllib.request.urlopen(_request(url), timeout=timeout, context=_ssl_context()) as r, open(dest, "wb") as f:
+        PROGRESS.update(state="download", done=0, total=int(r.headers.get("Content-Length") or 0))
+        while True:
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+            h.update(chunk)
+            PROGRESS["done"] += len(chunk)
+    return h.hexdigest()
 
 
 def detect_repo():
@@ -72,6 +99,16 @@ def releases_url():
     return f"{base}/releases/latest" if base else None
 
 
+def _version_url(repo):
+    base = os.environ.get("MSGA_UPDATE_BASE")  # للاختبار الآلي فقط
+    return f"{base.rstrip('/')}/version.py" if base else f"https://raw.githubusercontent.com/{repo}/main/msga/version.py"
+
+
+def _asset_base(repo, version):
+    base = os.environ.get("MSGA_UPDATE_BASE")
+    return f"{base.rstrip('/')}/" if base else f"https://github.com/{repo}/releases/download/v{version}/"
+
+
 def check(use_cache=False):
     """يرجع {current, latest, available} أو {error}. use_cache: يعيد آخر نتيجة لو أقل من 6 ساعات."""
     if use_cache and _check_cache["value"] and time.time() - _check_cache["t"] < CHECK_TTL:
@@ -89,7 +126,7 @@ def _check():
         out["error"] = "no_repo"
         return out
     try:
-        text = _get(f"https://raw.githubusercontent.com/{repo}/main/msga/version.py").decode("utf-8", "replace")
+        text = _get(_version_url(repo)).decode("utf-8", "replace")
         m = re.search(r'^VERSION\s*=\s*["\']([^"\']+)["\']', text, re.M)
         if not m:
             raise ValueError("version not found")
@@ -109,13 +146,111 @@ def _safe_extract(zf, dest):
     zf.extractall(dest)
 
 
+def _expected_hash(sums_text, name):
+    for line in sums_text.splitlines():
+        m = re.match(r"^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$", line)
+        if m and Path(m.group(2)).name == name:
+            return m.group(1).lower()
+    return None
+
+
+# ---------- النسخة الجاهزة (exe / app) ----------
+
+def _win_script(pid, src, dst, exe):
+    return "\r\n".join([
+        "@echo off", "chcp 65001 >nul",
+        f'set "PID={pid}"', f'set "SRC={src}"', f'set "DST={dst}"', f'set "EXE={exe}"',
+        "set /a tries=0",
+        ":wait",
+        'tasklist /FI "PID eq %PID%" /NH 2>nul | findstr /C:" %PID% " >nul',
+        "if not errorlevel 1 (",
+        "  set /a tries+=1",
+        "  if %tries% GTR 60 goto copy",
+        "  timeout /t 1 /nobreak >nul",
+        "  goto wait",
+        ")",
+        ":copy",
+        'robocopy "%SRC%" "%DST%" /E /NFL /NDL /NJH /NJS /NP /R:10 /W:1 >nul',
+        'start "" "%DST%\\%EXE%"',
+        'rd /s /q "%SRC%" >nul 2>nul',
+        '(goto) 2>nul & del "%~f0"', ""])
+
+
+def _mac_script(pid, src, dst):
+    q = shlex.quote
+    return "\n".join([
+        "#!/bin/bash", f"PID={int(pid)}", f"SRC={q(str(src))}", f"DST={q(str(dst))}",
+        'for i in $(seq 1 60); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done',
+        'rm -rf "$DST.old"; mv "$DST" "$DST.old"',
+        'if ditto "$SRC" "$DST"; then rm -rf "$DST.old"; else rm -rf "$DST"; mv "$DST.old" "$DST"; fi',
+        'xattr -dr com.apple.quarantine "$DST" 2>/dev/null',
+        'open "$DST"',
+        'rm -rf "$(dirname "$SRC")"; rm -- "$0"', ""])
+
+
+def apply_frozen():
+    info = _check()
+    if info.get("error"):
+        return {"ok": False, "error": info["error"]}
+    if not info.get("available"):
+        return {"ok": False, "error": "no_update"}
+    repo, latest = detect_repo(), info["latest"]
+    try:
+        base = _asset_base(repo, latest)
+        expected = _expected_hash(_get(base + "SHA256SUMS.txt").decode("utf-8", "replace"), ASSET)
+        if not expected:
+            return {"ok": False, "error": "bad_checksum"}
+        work = core.config_dir() / "update"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True)
+        zpath = work / ASSET
+        if _download(base + ASSET, zpath) != expected:
+            PROGRESS["state"] = "error"
+            return {"ok": False, "error": "bad_checksum"}
+        PROGRESS["state"] = "extract"
+        new = work / "new"
+        with zipfile.ZipFile(zpath) as zf:
+            _safe_extract(zf, new)
+        zpath.unlink()
+        pid = os.getpid()
+        if core.IS_MAC:
+            apps = [p for p in new.iterdir() if p.suffix == ".app"]
+            target = Path(sys.executable).resolve().parents[2]
+            if not apps or target.suffix != ".app":
+                return {"ok": False, "error": "bad_archive"}
+            script = work / "update.sh"
+            script.write_text(_mac_script(pid, apps[0], target), encoding="utf-8")
+            script.chmod(0o755)
+            subprocess.Popen(["/bin/bash", str(script)], start_new_session=True, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True)
+        else:
+            dirs = [p for p in new.iterdir() if p.is_dir()]
+            payload = dirs[0] if len(dirs) == 1 else new
+            exe = Path(sys.executable)
+            script = work / "update.cmd"
+            script.write_bytes(_win_script(pid, payload, exe.parent, exe.name).encode("utf-8"))
+            subprocess.Popen(["cmd", "/c", str(script)], creationflags=0x00000008 | 0x00000200,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             close_fds=True)
+        PROGRESS["state"] = "ready"
+        return {"ok": True, "exit": True, "version": latest}
+    except (ValueError, zipfile.BadZipFile, KeyError):
+        PROGRESS["state"] = "error"
+        return {"ok": False, "error": "bad_archive"}
+    except Exception as e:
+        PROGRESS["state"] = "error"
+        return {"ok": False, "error": "network", "detail": str(e)[:200]}
+
+
+# ---------- التثبيت من الكود ----------
+
 def apply():
     """ينزّل آخر نسخة ويستبدل ملفات البرنامج. إعداداتك (خارج مجلد البرنامج) ما تتأثر."""
     repo = detect_repo()
     if PLACEHOLDER in repo:
         return {"ok": False, "error": "no_repo"}
     if FROZEN:
-        return {"ok": False, "error": "frozen"}
+        return apply_frozen()
     try:
         if (core.ROOT / ".git").exists() and shutil.which("git"):
             r = subprocess.run(["git", "-C", str(core.ROOT), "pull", "--ff-only"], capture_output=True, text=True)
@@ -144,6 +279,8 @@ def apply():
     except Exception as e:
         return {"ok": False, "error": "network", "detail": str(e)[:200]}
 
+
+# ---------- محرك التنزيل yt-dlp ----------
 
 def ytdlp_version():
     cmd = core.ytdlp_cmd()

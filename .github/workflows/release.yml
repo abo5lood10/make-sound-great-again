@@ -50,6 +50,7 @@ jobs:
           pyinstaller --noconfirm --windowed --name "Make Sound Great Again" \
             --icon "${{ matrix.icon }}" \
             --add-data "msga/web${{ matrix.sep }}msga/web" \
+            --add-data "msga/models${{ matrix.sep }}msga/models" \
             --add-data "assets${{ matrix.sep }}assets" \
             --add-data "THIRD_PARTY.md${{ matrix.sep }}." \
             --collect-all yt_dlp \
@@ -89,6 +90,38 @@ jobs:
               sys.exit(1)
           PY
           echo "window selftest OK"
+      - name: End-to-end test of the in-app auto-update (fake newer release)
+        shell: bash
+        run: |
+          if [ "${{ matrix.name }}" = "macos" ]; then APP="dist/Make Sound Great Again.app"; else APP="dist/Make Sound Great Again"; fi
+          python scripts/ci_update_test.py "$APP"
+      - name: Build the Windows installer
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $v = (Select-String -Path msga/version.py -Pattern 'VERSION\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          & $iscc "/DAppVersion=$v" installer\setup.iss
+          if (-not (Test-Path out\Make-Sound-Great-Again-Setup.exe)) { throw "installer was not built" }
+      - name: Test the installer (silent install, run, uninstall)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "msga_installed"
+          Start-Process -Wait out\Make-Sound-Great-Again-Setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=$dir"
+          $exe = Join-Path $dir "Make Sound Great Again.exe"
+          if (-not (Test-Path $exe)) { throw "installed exe is missing" }
+          $env:MSGA_HOME = Join-Path $env:RUNNER_TEMP "msga_home_installed"
+          $p = Start-Process -PassThru $exe -ArgumentList "--no-open"
+          $ok = $false
+          for ($i = 0; $i -lt 40; $i++) {
+            try { $r = Invoke-RestMethod http://127.0.0.1:8765/api/ping; if ($r.app) { $ok = $true; break } } catch { Start-Sleep 1 }
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { throw "installed app did not answer" }
+          Start-Process -Wait (Join-Path $dir "unins000.exe") -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES"
+          if (Test-Path $exe) { throw "uninstall left the exe behind" }
       - name: Package
         shell: bash
         run: |
@@ -101,7 +134,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: out/*.zip
+          path: |
+            out/*.zip
+            out/*.exe
 
   publish:
     needs: build
@@ -111,7 +146,12 @@ jobs:
         with:
           path: out
           merge-multiple: true
+      - name: Checksums (the in-app updater verifies them)
+        run: |
+          cd out
+          sha256sum *.zip *.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" out/*.zip --repo "${{ github.repository }}" --generate-notes --title "${{ github.ref_name }}"
+        run: gh release create "${{ github.ref_name }}" out/* --repo "${{ github.repository }}" --generate-notes --title "${{ github.ref_name }}"

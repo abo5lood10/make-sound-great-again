@@ -45,6 +45,23 @@ const T = {
   rerun: ["جرّب نمطًا ثانيًا", "Try another preset"], rerun_go: ["أعد المعالجة", "Re-run"],
   spectro: ["عرض الطيف", "Show spectrogram"], spectro_hide: ["إخفاء الطيف", "Hide spectrogram"],
   spec_loading: ["جاري رسم الطيف…", "Drawing the spectrogram…"], spec_failed: ["تعذّر رسم الطيف", "Couldn't draw the spectrogram"],
+  pick_files: ["📁 اختر ملفات…", "📁 Choose files…"], pick_folder: ["🗂 اختر مجلد…", "🗂 Choose folder…"],
+  choose: ["اختيار…", "Choose…"],
+  picked: ["أُضيف {n} ملف للمعالجة", "{n} file(s) added"], nothing_found: ["ما لقيت ملفات صوت", "No audio files found"],
+  lufs_label: ["مستوى الصوت النهائي", "Target loudness"],
+  lufs_hint: ["سبوتي / يوتيوب -14. أعلى رقم = أعلى صوت", "Spotify / YouTube use -14. Higher = louder"],
+  l_n14: ["-14 LUFS (سبوتي / يوتيوب)", "-14 LUFS (Spotify / YouTube)"], l_n16: ["-16 LUFS (Apple Music / هادئ)", "-16 LUFS (Apple Music / quiet)"],
+  l_n11: ["-11 LUFS (أعلى)", "-11 LUFS (louder)"], l_n9: ["-9 LUFS (عالي جدًا)", "-9 LUFS (very loud)"],
+  l_off: ["بدون تعديل المستوى", "Don't change the level"],
+  p_ai_music: ["ذكاء اصطناعي: إزالة ضوضاء (أغاني)", "AI: noise removal (music)"],
+  p_ai_voice: ["ذكاء اصطناعي: تنظيف الصوت (كلام)", "AI: voice cleanup (speech)"],
+  watch_label: ["مراقبة مجلد", "Watch a folder"],
+  watch_hint: ["أي أغنية جديدة تنزل في المجلد تتحسّن تلقائيًا (الموجود فيه الحين ما يتأثر)", "Any new song dropped in the folder is enhanced automatically (existing files are left alone)"],
+  tags_edit: ["✎ تعديل البيانات", "✎ Edit tags"], tags_title: ["العنوان", "Title"], tags_artist: ["الفنان", "Artist"], tags_album: ["الألبوم", "Album"],
+  tags_save: ["حفظ", "Save"], tags_cover: ["تغيير الغلاف…", "Change cover…"], tags_saved: ["تم الحفظ ✓", "Saved ✓"],
+  tags_failed: ["تعذّر الحفظ", "Couldn't save"],
+  update_restarting: ["جاري التحديث… البرنامج بيعيد التشغيل لحاله", "Updating… the app will restart by itself"],
+  downloading: ["جاري تنزيل التحديث… {p}%", "Downloading the update… {p}%"],
   waiting: ["بالانتظار", "Waiting"], failed: ["فشل", "Failed"], cancelled: ["أُلغيت", "Cancelled"],
   reading_playlist: ["قراءة القائمة", "Reading playlist"],
   retry: ["إعادة المحاولة", "Retry"],
@@ -78,6 +95,8 @@ const T = {
   upd_err_network: ["تعذّر الاتصال بـ GitHub", "Couldn't reach GitHub"],
   upd_err_git: ["فشل git pull", "git pull failed"],
   upd_err_bad_archive: ["ملف التحديث غير صالح", "The update archive is invalid"],
+  upd_err_no_update: ["ما فيه تحديث جديد", "No update available"],
+  upd_err_bad_checksum: ["فشل التحقق من سلامة ملف التحديث", "The update file failed its integrity check"],
   upd_err_frozen: ["هذي نسخة مجمّعة: نزّل الإصدار الجديد من صفحة التحميل", "This is a packaged build: download the new version from the download page"],
   engine: ["محرك التنزيل (yt-dlp)", "Download engine (yt-dlp)"],
   update_engine: ["تحديث المحرك", "Update engine"],
@@ -95,7 +114,8 @@ const fmt = (s, p) => s.replace(/\{(\w+)\}/g, (_, k) => (p[k] === undefined ? ""
 const t = (k, p = {}) => fmt((T[k] || [k, k])[S.lang === "en" ? 1 : 0], p);
 const msg = (k, p) => MSG[k] ? fmt(MSG[k][S.lang === "en" ? 1 : 0], p || {}) : k;
 const f1 = v => (v === null || v === undefined || isNaN(v)) ? "؟" : (+v).toFixed(1);
-const PRESETS = ["auto", "gentle", "natural", "clean", "bass", "vocal"];
+const PRESETS = ["auto", "gentle", "natural", "clean", "bass", "vocal", "ai_music", "ai_voice"];
+const LUFS = [[-14, "l_n14"], [-16, "l_n16"], [-11, "l_n11"], [-9, "l_n9"], [0, "l_off"]];
 const FORMATS = ["flac", "mp3", "m4a", "opus", "wav"];
 
 async function api(path, body) {
@@ -114,6 +134,8 @@ function applyLang() {
   const curF = $("format").value || (S.cfg && S.cfg.format) || "flac";
   $("preset").innerHTML = opts("preset", PRESETS, "p_"); $("preset").value = curP;
   $("format").innerHTML = opts("format", FORMATS, "f_"); $("format").value = curF;
+  const curL = $("lufs").value || (S.cfg && String(S.cfg.lufs));
+  $("lufs").innerHTML = LUFS.map(([v, k]) => `<option value="${v}">${t(k)}</option>`).join(""); if (curL !== null && curL !== undefined) $("lufs").value = curL;
   $("back").textContent = (S.lang === "ar" ? t("back") + "  ›" : "‹  " + t("back"));
   setFiles(S.files); showOut(); fillAbout(); showUpdBanner();
   for (const id in S.cards) { S.cards[id].done = false; refreshCard(id); }
@@ -148,6 +170,22 @@ $("clearFiles").addEventListener("click", () => { $("files").value = ""; setFile
 ["dragleave", "drop"].forEach(ev => $("drop").addEventListener(ev, e => { e.preventDefault(); $("drop").classList.remove("over"); }));
 $("drop").addEventListener("drop", e => setFiles([...e.dataTransfer.files]));
 
+// اختيار ملفات / مجلد من نافذة النظام (تُعالَج من مكانها بدون نسخ). لو ما فيه نافذة نرجع لاختيار المتصفح.
+async function pickNative(kind, fallbackInput) {
+  $("formErr").textContent = "";
+  let r;
+  try { r = await api("/api/pick", { kind }); } catch (e) { r = { error: "x" }; }
+  if (r.error) { fallbackInput.click(); return; }
+  if (!r.paths.length) return;
+  const res = await api("/api/submit_paths", { paths: r.paths, preset: $("preset").value, format: $("format").value, ...tuning() });
+  $("formErr").textContent = res.error ? t("nothing_found") : t("picked", { n: res.added });
+  poll();
+}
+$("pickFiles").onclick = () => pickNative("files", $("files"));
+$("pickFolder").onclick = () => pickNative("folder", $("folderInput"));
+const MEDIA_RE = /\.(mp3|m4a|aac|flac|wav|ogg|opus|wma|aiff?|ape|mka|mp4|mkv|webm|mov|avi|m4v|flv|wmv)$/i;
+$("folderInput").addEventListener("change", e => { setFiles([...e.target.files].filter(f => MEDIA_RE.test(f.name))); });
+
 // لصق من الحافظة + Ctrl/Cmd+Enter للإرسال
 $("pasteBtn").onclick = async () => {
   $("pasteHint").textContent = "";
@@ -165,7 +203,7 @@ const setJobs = v => { jobs = Math.max(1, Math.min(8, v)); $("jobsVal").textCont
 $("jobsMinus").onclick = () => setJobs(jobs - 1);
 $("jobsPlus").onclick = () => setJobs(jobs + 1);
 ["bass", "treble"].forEach(k => $(k).addEventListener("input", () => { $(k + "Val").textContent = (+$(k).value > 0 ? "+" : "") + $(k).value; }));
-const tuning = () => ({ bass: +$("bass").value, treble: +$("treble").value });
+const tuning = () => ({ bass: +$("bass").value, treble: +$("treble").value, lufs: +$("lufs").value });
 $("saveDefaults").onclick = async () => {
   await saveCfg({ preset: $("preset").value, format: $("format").value, jobs, ...tuning() });
   $("saveDefaults").textContent = t("saved");
@@ -274,6 +312,14 @@ function renderResult(c) {
   // أدوات إضافية: إظهار في المجلد / الطيف / نمط ثاني
   const more = c.res.querySelector(".more"), spec = c.res.querySelector(".spec");
   more.append(btn("link", "📂 " + t("show_folder"), () => api("/api/open", {})));
+  if (it.can_tags) {
+    const tagsBox = document.createElement("div"); tagsBox.className = "tags"; tagsBox.hidden = true;
+    more.append(btn("link", t("tags_edit"), async () => {
+      tagsBox.hidden = !tagsBox.hidden;
+      if (!tagsBox.hidden && !tagsBox.dataset.loaded) { tagsBox.dataset.loaded = "1"; await buildTags(tagsBox, it); }
+    }));
+    c.res.append(tagsBox);
+  }
   if (it.can_rerun) {
     const specBtn = btn("link", "📈 " + t("spectro"), () => {
       spec.hidden = !spec.hidden;
@@ -288,6 +334,33 @@ function renderResult(c) {
     wrap.append(lbl, sel, go); more.append(wrap);
   }
   c.done = true;
+}
+async function buildTags(box, it) {
+  const cur = await api("/api/tags?id=" + encodeURIComponent(it.id));
+  if (cur.error) { box.textContent = t("tags_failed"); return; }
+  const fields = {};
+  [["title", "tags_title"], ["artist", "tags_artist"], ["album", "tags_album"]].forEach(([k, lbl]) => {
+    const l = document.createElement("label"); l.textContent = t(lbl);
+    const i = document.createElement("input"); i.type = "text"; i.value = cur[k] || ""; fields[k] = i;
+    l.append(i); box.append(l);
+  });
+  const row = document.createElement("div"); row.className = "inline";
+  const msgEl = document.createElement("span"); msgEl.className = "sub";
+  const save = btn("tint", t("tags_save"), async () => {
+    const r = await api("/api/tags", { id: it.id, title: fields.title.value, artist: fields.artist.value, album: fields.album.value });
+    msgEl.textContent = r.ok ? t("tags_saved") : t("tags_failed");
+  });
+  row.append(save);
+  if (cur.cover_ok) {
+    const file = document.createElement("input"); file.type = "file"; file.accept = "image/jpeg,image/png"; file.hidden = true;
+    file.onchange = async () => {
+      if (!file.files[0]) return;
+      const r = await (await fetch("/api/cover?id=" + encodeURIComponent(it.id), { method: "POST", body: file.files[0] })).json();
+      msgEl.textContent = r.ok ? t("tags_saved") : t("tags_failed");
+    };
+    row.append(btn("tint", t("tags_cover"), () => file.click()), file);
+  }
+  row.append(msgEl); box.append(row);
 }
 function loadSpectrogram(box, id) {
   box.innerHTML = `<div class="sub" data-s="load">${t("spec_loading")}</div>`;
@@ -351,6 +424,7 @@ async function loadSettings() {
   setSeg("langSeg", S.lang); setSeg("themeSeg", S.cfg.theme);
   $("lightMode").checked = S.cfg.light; $("notifyOn").checked = S.cfg.notify; $("autoCheck").checked = S.cfg.auto_check;
   $("outPath").value = S.cfg.out;
+  $("watchOn").checked = S.cfg.watch_on; $("watchPath").value = S.cfg.watch || "";
   fillAbout();
   if (S.upd && S.upd.available) showUpdateResult(S.upd);
   const v = await api("/api/ytdlp/version", {});
@@ -361,6 +435,12 @@ bindSeg("themeSeg", async v => { await saveCfg({ theme: v }); applyTheme(); });
 $("lightMode").onchange = e => saveCfg({ light: e.target.checked });
 $("notifyOn").onchange = e => saveCfg({ notify: e.target.checked });
 $("autoCheck").onchange = e => saveCfg({ auto_check: e.target.checked });
+$("watchOn").onchange = e => saveCfg({ watch_on: e.target.checked });
+$("watchSave").onclick = async () => { await saveCfg({ watch: $("watchPath").value.trim() }); $("watchSave").textContent = t("saved"); setTimeout(() => { $("watchSave").textContent = t("save"); }, 1500); };
+$("watchPick").onclick = async () => {
+  const r = await api("/api/pick", { kind: "folder" });
+  if (r.paths && r.paths[0]) { $("watchPath").value = r.paths[0]; await saveCfg({ watch: r.paths[0] }); }
+};
 $("outSave").onclick = async () => { await saveCfg({ out: $("outPath").value.trim() }); showOut(); $("outSave").textContent = t("saved"); setTimeout(() => { $("outSave").textContent = t("save"); }, 1500); };
 
 // ---------- التحديثات ----------
@@ -373,9 +453,8 @@ function showUpdBanner() {
 function showUpdateResult(r) {
   $("updStatus").textContent = t("update_available", { v: r.latest });
   $("updRow").hidden = false; $("updTitle").textContent = `v${r.current} → v${r.latest}`;
-  const frozen = S.state && S.state.frozen;
-  const ap = $("updApply"); ap.hidden = frozen; ap.textContent = t("update_to", { v: r.latest }); ap.disabled = false;
-  $("updReleases").hidden = !frozen; $("updRestart").hidden = true;
+  const ap = $("updApply"); ap.hidden = false; ap.textContent = t("update_to", { v: r.latest }); ap.disabled = false;
+  $("updReleases").hidden = true; $("updRestart").hidden = true;
 }
 async function checkUpdates(cached) {
   const r = await api("/api/update/check", { cached });
@@ -390,11 +469,32 @@ $("updCheck").onclick = async () => {
   if (!r.available) { $("updStatus").textContent = t("up_to_date") + `  (v${r.current})`; return; }
   showUpdateResult(r);
 };
+function waitForRestart(oldVersion) {
+  const deadline = Date.now() + 120000;
+  const wait = async () => {
+    try {
+      const r = await (await fetch("/api/ping")).json();
+      if (r.version && r.version !== oldVersion) { location.reload(); return; }
+    } catch (e) { /* السيرفر بيرجع */ }
+    if (Date.now() < deadline) setTimeout(wait, 1500);
+  };
+  setTimeout(wait, 3000);
+}
 $("updApply").onclick = async () => {
   const ap = $("updApply"); ap.disabled = true; ap.textContent = t("updating");
-  const r = await api("/api/update/apply", {});
-  if (!r.ok) { $("updStatus").textContent = updError(r); ap.disabled = false; ap.textContent = t("check_updates"); return; }
-  $("updStatus").textContent = t("updated"); ap.hidden = true; $("updRestart").hidden = false;
+  $("updProgRow").hidden = false; $("updProgBar").style.width = "0%";
+  const poller = setInterval(async () => {
+    try {
+      const p = await api("/api/update/progress");
+      if (p.state === "download" && p.total) { const pc = Math.round(100 * p.done / p.total); $("updProgBar").style.width = pc + "%"; $("updStatus").textContent = t("downloading", { p: pc }); }
+    } catch (e) { /* قد يكون البرنامج قفل للتحديث */ }
+  }, 500);
+  let r;
+  try { r = await api("/api/update/apply", {}); } finally { clearInterval(poller); }
+  if (!r.ok) { $("updProgRow").hidden = true; $("updStatus").textContent = updError(r); ap.disabled = false; ap.textContent = t("check_updates"); return; }
+  ap.hidden = true;
+  if (r.exit) { $("updProgBar").style.width = "100%"; $("updStatus").textContent = t("update_restarting"); waitForRestart(S.state.version); return; }
+  $("updProgRow").hidden = true; $("updStatus").textContent = t("updated"); $("updRestart").hidden = false;
 };
 $("updReleases").onclick = () => api("/api/open_repo", { releases: true });
 $("updRestart").onclick = async () => {
@@ -430,6 +530,7 @@ async function poll() {
       ["bass", "treble"].forEach(k => $(k).dispatchEvent(new Event("input")));
       $("preset").innerHTML = opts("", PRESETS, "p_"); $("preset").value = s.config.preset;
       $("format").innerHTML = opts("", FORMATS, "f_"); $("format").value = s.config.format;
+      $("lufs").innerHTML = LUFS.map(([v, k]) => `<option value="${v}">${t(k)}</option>`).join(""); $("lufs").value = s.config.lufs;
       applyLang();
     }
     renderBanner(s); render(s.items); fillAbout();

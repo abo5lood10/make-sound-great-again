@@ -30,6 +30,11 @@ def make_tone(path, bitrate="64k"):
                     "-c:a", "libmp3lame", "-b:a", bitrate, str(path)], check=True)
 
 
+def make_png(path, color="red"):
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={color}:s=96x96",
+                    "-frames:v", "1", str(path)], check=True)
+
+
 class Basics(unittest.TestCase):
     def test_versions(self):
         self.assertEqual(updater.parse_version("v1.2.3"), (1, 2, 3))
@@ -276,8 +281,145 @@ class ServerFeatures(unittest.TestCase):
         self.assertFalse(public_retry(it))
 
 
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+class LocalFilesAndWatch(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.cfg_out = str(Path(_HOME) / "out3")
+        core.save_config({**core.load_config(), "out": cls.cfg_out, "notify": False, "watch": "", "watch_on": False})
+        server.STATE.items.clear()
+        cls.httpd = server.make_server("window")
+        cls.port = server.STATE.port
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def call(self, method, path, body=None, headers=None):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=20)
+        data = json.dumps(body).encode() if isinstance(body, dict) else body
+        c.request(method, path, body=data, headers=headers or {})
+        r = c.getresponse()
+        raw = r.read()
+        c.close()
+        return r.status, raw
+
+    def wait_done(self, label, tries=120):
+        for _ in range(tries):
+            items = json.loads(self.call("GET", "/api/state")[1])["items"]
+            hit = next((i for i in items if i["label"] == label and i["status"] in ("done", "error")), None)
+            if hit:
+                return hit
+            time.sleep(0.5)
+        self.fail("timeout")
+
+    def test_folder_processing_original_stays_and_serves(self):
+        folder = Path(tempfile.mkdtemp())
+        make_tone(folder / "local_song.mp3")
+        st, _ = self.call("POST", "/api/submit_paths", {"paths": [str(folder)]})
+        self.assertEqual(st, 200)
+        it = self.wait_done("local_song.mp3")
+        self.assertEqual(it["status"], "done", it)
+        self.assertTrue((folder / "local_song.mp3").is_file())          # الأصل ما انحذف ولا انتقل
+        self.assertFalse(list(Path(self.cfg_out).glob("*_original*")))  # وما انعمل له نسخة
+        self.assertTrue(it["result"]["original_url"].startswith("/orig/"))
+        st, data = self.call("GET", it["result"]["original_url"], headers={"Range": "bytes=0-9"})
+        self.assertEqual((st, len(data)), (206, 10))
+        # تاغات + غلاف عبر الـ API
+        st, raw = self.call("POST", "/api/tags", {"id": it["id"], "title": "T", "artist": "A", "album": "B"})
+        self.assertEqual(st, 200)
+        tags = json.loads(self.call("GET", f"/api/tags?id={it['id']}")[1])
+        self.assertEqual((tags["title"], tags["artist"], tags["album"]), ("T", "A", "B"))
+        png = Path(tempfile.mkdtemp()) / "c.png"
+        make_png(png)
+        st, _ = self.call("POST", f"/api/cover?id={it['id']}", png.read_bytes())
+        self.assertEqual(st, 200)
+        self.assertTrue(json.loads(self.call("GET", f"/api/tags?id={it['id']}")[1])["has_cover"])
+        st, _ = self.call("POST", f"/api/cover?id={it['id']}", b"not an image")
+        self.assertEqual(st, 400)
+
+    def test_watch_folder_only_processes_new_files(self):
+        folder = Path(tempfile.mkdtemp())
+        make_tone(folder / "old_song.mp3")
+        core.save_config({**core.load_config(), "watch": str(folder), "watch_on": True})
+        before = len(server.STATE.items)
+        server.watch_scan()                                  # أول دورة: خط أساس فقط، ما يعالج الموجود
+        self.assertEqual(len(server.STATE.items), before)
+        make_tone(folder / "new_song.mp3")
+        past = time.time() - 60
+        os.utime(folder / "new_song.mp3", (past, past))
+        server.watch_scan()                                  # يسجّل الحجم
+        server.watch_scan()                                  # حجمه ثابت: يعالجه
+        labels = [i["label"] for i in server.STATE.items[before:]]
+        self.assertEqual(labels, ["new_song.mp3"])
+        it = self.wait_done("new_song.mp3")
+        self.assertEqual(it["status"], "done", it)
+        self.assertEqual(server.watch_scan(), 0)             # ما يعيده
+        core.save_config({**core.load_config(), "watch": "", "watch_on": False})
+
+
 def public_retry(it):
     return server.public(it)["can_retry"]
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+class Quality(unittest.TestCase):
+    """فحوص موضوعية لسلامة الصوت (ما تقدر تقيّم الذوق، لكنها تمنع التشويه وأخطاء المستوى)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = Path(tempfile.mkdtemp())
+        cls.src = cls.dir / "music.mp3"
+        make_tone(cls.src, "128k")
+
+    def run_preset(self, **kw):
+        opts = {"out_dir": str(self.dir / "o"), "format": "flac"}
+        opts.update(kw)
+        return core.process_item(str(self.src), opts)["report"]
+
+    def test_loudness_targets_are_hit_without_clipping(self):
+        for target in (-16, -14, -11, -9):
+            r = self.run_preset(lufs=target)
+            self.assertAlmostEqual(r["lufs_after"], target, delta=1.0, msg=f"target {target}")
+            self.assertLessEqual(r["tp_after"], -0.5, f"true peak at {target}")
+
+    def test_no_normalization_keeps_level_and_never_clips(self):
+        r = self.run_preset(lufs=0)
+        self.assertLessEqual(r["tp_after"], 0.0)
+        self.assertAlmostEqual(r["lufs_after"], r["lufs_before"], delta=3.0)
+
+    def test_every_preset_is_safe(self):
+        for preset in core.PRESETS:
+            r = self.run_preset(preset=preset)
+            self.assertLessEqual(r["tp_after"], -0.5, preset)
+            self.assertAlmostEqual(r["lufs_after"], -14.0, delta=1.5, msg=preset)
+
+    def test_ai_presets_need_their_models(self):
+        with mock.patch.object(core, "MODELS_DIR", Path(tempfile.mkdtemp())):
+            with self.assertRaises(core.EnhanceError) as ctx:
+                self.run_preset(preset="ai_music")
+            self.assertEqual(ctx.exception.key, "err_model")
+
+    def test_tags_and_cover_roundtrip(self):
+        out = core.process_item(str(self.src), {"out_dir": str(self.dir / "t"), "format": "flac"})["output"]
+        core.write_tags(out, {"title": "عنوان", "artist": "Artist", "album": "Album"})
+        tags = core.read_tags(out)
+        self.assertEqual((tags["title"], tags["artist"], tags["album"]), ("عنوان", "Artist", "Album"))
+        img = self.dir / "c.png"
+        make_png(img, "blue")
+        core.write_tags(out, {}, cover=img)
+        self.assertTrue(core.read_tags(out)["has_cover"])
+        self.assertEqual(core.read_tags(out)["title"], "عنوان")  # التاغات تبقى
+
+    def test_collect_media_filters_and_recurses(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "sub").mkdir()
+        for name in ("a.mp3", "sub/b.FLAC", "sub/c.txt", "d.mp4", ".hidden.mp3"):
+            (root / name).write_bytes(b"x")
+        names = sorted(p.name for p in core.collect_media([str(root)]))
+        self.assertEqual(names, ["a.mp3", "b.FLAC", "d.mp4"])
 
 
 class Startup(unittest.TestCase):
@@ -294,6 +436,38 @@ class Startup(unittest.TestCase):
             p.wait(timeout=10)
             p.stdout.close()
             p.stderr.close()
+
+
+class FrozenUpdateHelpers(unittest.TestCase):
+    def test_expected_hash_parsing(self):
+        sums = "a" * 64 + "  other.zip\n" + "b" * 64 + "  *Make-Sound-Great-Again-windows.zip\n"
+        self.assertEqual(updater._expected_hash(sums, "Make-Sound-Great-Again-windows.zip"), "b" * 64)
+        self.assertIsNone(updater._expected_hash(sums, "missing.zip"))
+
+    def test_windows_script_has_all_parts(self):
+        text = updater._win_script(321, r"C:\new\App", r"C:\Users\Me\My App", "App.exe")
+        for needle in ('set "PID=321"', r'set "SRC=C:\new\App"', r'set "DST=C:\Users\Me\My App"', "robocopy",
+                       'start "" "%DST%\\%EXE%"', "tasklist"):
+            self.assertIn(needle, text)
+
+    @unittest.skipIf(os.name == "nt", "bash script")
+    def test_mac_script_swaps_bundle_and_relaunches(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "bin").mkdir()
+        src, dst = root / "src" / "New App.app", root / "dst" / "My App.app"
+        for d, text in ((src, "new"), (dst, "old")):
+            (d / "Contents").mkdir(parents=True)
+            (d / "Contents" / "v.txt").write_text(text)
+        shims = {"ditto": 'cp -a "$1" "$2"', "open": f'touch "{root}/opened"', "xattr": "exit 0"}
+        for name, body in shims.items():
+            (root / "bin" / name).write_text("#!/bin/bash\n" + body + "\n")
+            (root / "bin" / name).chmod(0o755)
+        script = root / "u.sh"
+        script.write_text(updater._mac_script(999999, src, dst))
+        subprocess.run(["bash", str(script)], check=True, env=dict(os.environ, PATH=f"{root / 'bin'}:{os.environ['PATH']}"))
+        self.assertEqual((dst / "Contents" / "v.txt").read_text(), "new")
+        self.assertTrue((root / "opened").exists())
+        self.assertFalse((root / "src").exists())
 
 
 class Updater(unittest.TestCase):

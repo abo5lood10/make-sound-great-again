@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from . import core, updater
+from . import core, picker, updater
 from .version import APP_NAME, VERSION
 
 HOST = "127.0.0.1"
@@ -88,6 +88,7 @@ STATE = State()
 def public(it):
     d = {k: v for k, v in it.items() if not k.startswith("_")}
     d["can_rerun"] = bool(it["_paths"].get("o") and Path(it["_paths"]["o"]).exists())
+    d["can_tags"] = bool(it["_paths"].get("e") and Path(it["_paths"]["e"]).exists())
     d["can_retry"] = bool(it["status"] in ("error", "cancelled") and it["_source"]
                           and (it["kind"] != "file" or Path(it["_source"]).is_file()))
     return d
@@ -95,6 +96,17 @@ def public(it):
 
 def file_url(path):
     return "/files/" + quote(Path(path).name)
+
+
+def original_url(it, path):
+    """النسخة الأصلية: لو داخل مجلد الحفظ نقدّمها من /files، وإلا (ملف المستخدم الأصلي) من /orig/<id>."""
+    if not path:
+        return None
+    try:
+        inside = Path(path).resolve().parent == Path(core.load_config()["out"]).resolve()
+    except OSError:
+        inside = False
+    return file_url(path) if inside else f"/orig/{it['id']}"
 
 
 def error_dict(e):
@@ -105,7 +117,7 @@ def error_dict(e):
 
 def request_key(opts):
     return {"preset": opts.get("preset"), "format": opts.get("format"),
-            "bass": int(opts.get("bass", 0)), "treble": int(opts.get("treble", 0))}
+            "bass": int(opts.get("bass", 0)), "treble": int(opts.get("treble", 0)), "lufs": opts.get("lufs", -14)}
 
 
 # ---------- السجل (يبقى بعد إغلاق البرنامج) ----------
@@ -140,6 +152,9 @@ def load_history():
               "_paths": {"e": str(out / name)}}
         if r.get("original_name") and (out / r["original_name"]).is_file():
             it["_paths"]["o"] = str(out / r["original_name"])
+        elif r.get("original_path") and Path(r["original_path"]).is_file():
+            it["_paths"]["o"] = r["original_path"]
+            r["original_url"] = f"/orig/{it['id']}"
         items.append(it)
     with STATE.lock:
         STATE.items[:0] = items
@@ -203,9 +218,10 @@ def run_item(it):
         res = core.process_item(it["_source"], opts, cb)
         r = res["report"]
         r.update(title=res["title"], output_url=file_url(res["output"]),
-                 original_url=file_url(res["original"]) if res["original"] else None,
+                 original_url=original_url(it, res["original"]),
                  output_name=Path(res["output"]).name,
-                 original_name=Path(res["original"]).name if res["original"] else None)
+                 original_name=Path(res["original"]).name if res["original"] else None,
+                 original_path=res["original"])
         it["_paths"] = {"e": res["output"], "o": res["original"]}
         it.update(status="done", stage_key="st_done", pct=100, result=r)
         STATE.finished_batch += 1
@@ -244,6 +260,91 @@ def run_playlist(it, jobs):
 
 def submit_item(it, jobs):
     it["_future"] = STATE.get_executor(jobs).submit(run_item, it)
+
+
+def add_local(path, opts, jobs, label=None, kind="path"):
+    """ملف على جهاز المستخدم: يُعالَج من مكانه بدون نسخ (النسخة الأصلية تبقى ملفه)."""
+    path = Path(path)
+    o = dict(opts, name=path.stem, keep_original=False, original_override=str(path))
+    it = STATE.new_item(label or path.name, kind, source=str(path), opts=o, req=request_key(opts), src_url=str(path))
+    submit_item(it, jobs)
+    return it
+
+
+def hard_exit():
+    """يقفل العملية بالكامل (حتى النافذة)، لأن serve_forever ما يقفل نافذة البرنامج."""
+    time.sleep(0.8)
+    os._exit(0)
+
+
+# ---------- مراقبة مجلد: أي أغنية جديدة تنزل فيه تُحسَّن تلقائيًا ----------
+WATCH_INTERVAL = 15
+_watch_sizes = {}
+
+
+def watch_seen_path():
+    return core.config_dir() / "watch_seen.json"
+
+
+def _load_seen():
+    try:
+        return set(json.loads(watch_seen_path().read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return set()
+
+
+def _save_seen(seen):
+    try:
+        watch_seen_path().write_text(json.dumps(sorted(seen)[-5000:], ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def watch_scan():
+    """دورة وحدة: يرجع عدد الملفات اللي أُضيفت. أول مرة على مجلد: يسجّل اللي فيه فقط (ما يعالج القديم)."""
+    cfg = core.load_config()
+    folder = Path(cfg["watch"]).expanduser() if cfg["watch"] else None
+    if not cfg["watch_on"] or not folder or not folder.is_dir():
+        return 0
+    out = Path(cfg["out"]).resolve()
+    seen = _load_seen()
+    marker = f"__baseline__|{folder.resolve()}"
+    baseline = marker not in seen
+    added = 0
+    for f in core.collect_media([str(folder)]):
+        if out in f.parents or f.stem.endswith(("_enhanced", "_original")):
+            continue  # ما نعالج مخرجاتنا
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        key = f"{f}|{int(st.st_mtime)}|{st.st_size}"
+        if key in seen:
+            continue
+        if baseline:
+            seen.add(key)
+            continue
+        # نتأكد إن الملف خلص نسخ: حجمه ثابت بين دورتين وعمره أكثر من 5 ثواني
+        if _watch_sizes.get(str(f)) != st.st_size or time.time() - st.st_mtime < 5:
+            _watch_sizes[str(f)] = st.st_size
+            continue
+        seen.add(key)
+        parsed = Handler._opts_static(cfg)
+        add_local(f, parsed[0], parsed[1], label=f.name, kind="watch")
+        added += 1
+    if baseline:
+        seen.add(marker)
+    _save_seen(seen)
+    return added
+
+
+def watcher_loop():
+    while True:
+        time.sleep(WATCH_INTERVAL)
+        try:
+            watch_scan()
+        except Exception:
+            pass
 
 
 def open_folder(path):
@@ -314,6 +415,17 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_file(core.WEB_DIR, unquote(path[8:]))
         elif path.startswith("/files/"):
             self._serve_file(Path(core.load_config()["out"]), unquote(path[7:]), cache=False)
+        elif path.startswith("/orig/"):
+            it = STATE.find(unquote(path[6:]))
+            p = Path(it["_paths"].get("o") or "") if it else None
+            if p and p.is_file():
+                self._serve_file(p.parent, p.name, cache=False)
+            else:
+                self.send_error(404)
+        elif path == "/api/tags":
+            self._get_tags(parse_qs(url.query))
+        elif path == "/api/update/progress":
+            self._json(updater.PROGRESS)
         elif path == "/api/ping":
             self._json({"ok": True, "app": APP_NAME, "mode": STATE.mode, "version": VERSION})
         elif path == "/api/messages":
@@ -334,7 +446,8 @@ class Handler(BaseHTTPRequestHandler):
                 "items": items, "presets": list(core.PRESETS), "formats": list(core.CODECS),
                 "thmanyah": STATE.thmanyah, "missing": core.missing_tools(need_download=True),
                 "repo_url": updater.repo_url(), "releases_url": updater.releases_url(),
-                "frozen": updater.FROZEN, "platform": sys.platform}
+                "frozen": updater.FROZEN, "platform": sys.platform, "pick": picker.available(),
+                "ai_models": all((core.MODELS_DIR / n).is_file() for n in ("mp.rnnn", "bd.rnnn"))}
 
     def _spectrogram(self, q):
         it = STATE.find((q.get("id") or [""])[0])
@@ -363,6 +476,8 @@ class Handler(BaseHTTPRequestHandler):
         path = url.path
         if path == "/api/upload":
             return self._upload(parse_qs(url.query))
+        if path == "/api/cover":
+            return self._cover(parse_qs(url.query))
         d = self._read_json()
         routes = {
             "/api/submit": self._submit, "/api/cancel": self._cancel, "/api/retry": self._retry,
@@ -371,12 +486,18 @@ class Handler(BaseHTTPRequestHandler):
             "/api/update/check": self._upd_check, "/api/update/apply": self._upd_apply,
             "/api/update/ytdlp": self._upd_ytdlp, "/api/ytdlp/version": self._ytdlp_version,
             "/api/restart": self._restart, "/api/quit": self._quit,
+            "/api/pick": self._pick, "/api/submit_paths": self._submit_paths, "/api/tags": self._set_tags,
         }
         fn = routes.get(path)
         if fn:
             fn(d)
         else:
             self.send_error(404)
+
+    @staticmethod
+    def _opts_static(cfg):
+        return {"preset": cfg["preset"], "format": cfg["format"], "out_dir": cfg["out"], "light": cfg["light"],
+                "bass": cfg["bass"], "treble": cfg["treble"], "lufs": cfg["lufs"]}, cfg["jobs"]
 
     def _opts(self, d):
         cfg = core.load_config()
@@ -389,8 +510,14 @@ class Handler(BaseHTTPRequestHandler):
             treble = max(-6, min(6, int(d.get("treble", cfg["treble"]))))
         except (TypeError, ValueError):
             return None
+        try:
+            lufs = int(d.get("lufs", cfg["lufs"]))
+        except (TypeError, ValueError):
+            return None
+        if lufs not in core.LUFS_CHOICES:
+            return None
         return {"preset": preset, "format": fmt, "out_dir": cfg["out"], "light": cfg["light"],
-                "bass": bass, "treble": treble}, cfg["jobs"]
+                "bass": bass, "treble": treble, "lufs": lufs}, cfg["jobs"]
 
     def _submit(self, d):
         parsed = self._opts(d)
@@ -526,7 +653,10 @@ class Handler(BaseHTTPRequestHandler):
         self._json(updater.check(use_cache=bool(d.get("cached"))))
 
     def _upd_apply(self, _d):
-        self._json(updater.apply())
+        res = updater.apply()
+        self._json(res)
+        if res.get("ok") and res.get("exit"):  # النسخة الجاهزة: السكربت ينتظر خروجنا ثم يستبدل ويعيد التشغيل
+            threading.Thread(target=hard_exit, daemon=True).start()
 
     def _upd_ytdlp(self, _d):
         self._json(updater.update_ytdlp())
@@ -537,6 +667,78 @@ class Handler(BaseHTTPRequestHandler):
     def _restart(self, _d):
         self._json({"ok": True})
         threading.Thread(target=restart_app, daemon=True).start()
+
+    # ---- اختيار ملفات / مجلدات ومعالجتها من مكانها (بدون نسخ) ----
+    def _pick(self, d):
+        kind = "folder" if d.get("kind") == "folder" else "files"
+        try:
+            paths = picker.pick(kind)
+        except Exception:
+            paths = None
+        if paths is None:
+            return self._json({"error": "no_dialog"}, 501)
+        self._json({"paths": paths})
+
+    def _submit_paths(self, d):
+        parsed = self._opts(d)
+        if not parsed:
+            return self._json({"error": "bad_options"}, 400)
+        opts, jobs = parsed
+        files = core.collect_media([p for p in d.get("paths", []) if isinstance(p, str)])
+        for f in files:
+            add_local(f, opts, jobs)
+        self._json({"added": len(files)} if files else {"error": "nothing"}, 200 if files else 400)
+
+    # ---- بيانات الأغنية (التاغات) والغلاف ----
+    def _tag_target(self, item_id):
+        it = STATE.find(item_id or "")
+        p = it["_paths"].get("e") if it else None
+        return Path(p) if p and Path(p).is_file() else None
+
+    def _get_tags(self, q):
+        p = self._tag_target((q.get("id") or [""])[0])
+        if not p:
+            return self._json({"error": "not_found"}, 404)
+        try:
+            self._json({**core.read_tags(p), "cover_ok": p.suffix.lower().lstrip(".") in core.COVER_FORMATS})
+        except core.EnhanceError as e:
+            self._json({"error": e.key}, 500)
+
+    def _set_tags(self, d):
+        p = self._tag_target(d.get("id"))
+        if not p:
+            return self._json({"error": "not_found"}, 404)
+        tags = {k: str(d[k])[:300] for k in core.TAG_KEYS if k in d}
+        try:
+            core.set_light(core.load_config()["light"])
+            core.write_tags(p, tags)
+            self._json({"ok": True})
+        except core.EnhanceError as e:
+            self._json({"error": e.key}, 500)
+
+    def _cover(self, q):
+        size = int(self.headers.get("Content-Length") or 0)
+        p = self._tag_target((q.get("id") or [""])[0])
+        if not p or size <= 0 or size > 10 * 1024 * 1024:
+            self.rfile.read(max(0, min(size, 10 * 1024 * 1024)))
+            return self._json({"error": "bad_request"}, 400)
+        data = self.rfile.read(size)
+        ext = ".png" if data[:4] == b"\x89PNG" else ".jpg" if data[:2] == b"\xff\xd8" else None
+        if not ext:
+            return self._json({"error": "bad_image"}, 400)
+        tmp = core.upload_dir() / f"cover_{uuid.uuid4().hex[:8]}{ext}"
+        try:
+            tmp.write_bytes(data)
+            core.set_light(core.load_config()["light"])
+            core.write_tags(p, {}, cover=tmp)
+            self._json({"ok": True})
+        except core.EnhanceError as e:
+            self._json({"error": e.key}, 500)
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
     def _quit(self, _d):
         self._json({"ok": True})
@@ -602,6 +804,7 @@ def make_server(mode="browser"):
             if not STATE.items:
                 load_history()
             prune_uploads()
+            threading.Thread(target=watcher_loop, daemon=True).start()
             return httpd
         except OSError as e:
             last_err = e
@@ -626,7 +829,10 @@ def restart_app():
     else:
         args = [sys.executable, str(core.ROOT / "run.py"), *rest]
     subprocess.Popen(args, cwd=str(core.ROOT), close_fds=True)
-    stop_server()
+    for it in list(STATE.items):
+        if it["status"] in ("waiting", "running"):
+            it["_token"].cancel()
+    os._exit(0)
 
 
 def idle_watchdog():

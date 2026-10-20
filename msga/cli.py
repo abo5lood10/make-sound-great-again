@@ -55,6 +55,8 @@ def main(argv=None):
                     help="auto | gentle | natural | clean | bass | vocal")
     ap.add_argument("-f", "--format", choices=core.CODECS, default=cfg["format"])
     ap.add_argument("-o", "--out", type=Path, default=Path(cfg["out"]), help="output folder")
+    ap.add_argument("--lufs", type=int, choices=core.LUFS_CHOICES, default=cfg["lufs"],
+                    help="target loudness (0 = don't change the level)")
     ap.add_argument("-j", "--jobs", type=int, default=cfg["jobs"], help="parallel jobs")
     ap.add_argument("--playlist", action="store_true", help="links are playlists: download every song")
     ap.add_argument("--clean", type=int, metavar="DAYS", help="delete output files older than DAYS")
@@ -80,7 +82,8 @@ def main(argv=None):
         print(e.text("en"), file=sys.stderr)
         return 2
 
-    opts = {"preset": args.preset, "format": args.format, "out_dir": args.out, "light": cfg["light"]}
+    opts = {"preset": args.preset, "format": args.format, "out_dir": args.out, "light": cfg["light"],
+            "lufs": args.lufs, "bass": cfg["bass"], "treble": cfg["treble"]}
     jobs = max(1, min(8, args.jobs))
     live = jobs == 1 and sys.stdout.isatty()
     total = len(items)

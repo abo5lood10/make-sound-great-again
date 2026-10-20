@@ -61,7 +61,9 @@ def upload_dir():
 DEFAULT_OUT = str(Path.home() / "Music" / "Make Sound Great Again")
 DEFAULT_CONFIG = {"preset": "auto", "format": "flac", "jobs": 1, "out": DEFAULT_OUT,
                   "lang": "ar", "theme": "system", "light": True,
-                  "bass": 0, "treble": 0, "notify": True, "auto_check": True}
+                  "bass": 0, "treble": 0, "notify": True, "auto_check": True,
+                  "lufs": -14, "watch": "", "watch_on": False}
+LUFS_CHOICES = (0, -9, -11, -14, -16)  # 0 = بدون تطبيع
 
 # ملاحظة: كل النماذج تنتهي بتطبيع مستوى الصوت (مرحلتين) وlimiter عشان ما يصير تشويه.
 PRESETS = {
@@ -103,8 +105,19 @@ PRESETS = {
         "equalizer=f=5000:t=q:w=1:g=1.5",
         "aexciter=amount=2:drive=7:freq=6500",
     ],
+    # ذكاء اصطناعي خفيف (RNNoise عبر فلتر arnndn في ffmpeg): ما يُختار تلقائيًا، فقط لو اخترته
+    "ai_music": [  # موديل mp: صوت عام مع ضوضاء عامة. mix يخلّط مع الأصل عشان ما يضر الآلات
+        "highpass=f=20",
+        "arnndn=m=mp.rnnn:mix=0.85",
+    ],
+    "ai_voice": [  # موديل bd: كلام مع ضوضاء تسجيل (مقاطع تيكتوك / انستا اللي فيها شخص يتكلم)
+        "highpass=f=70",
+        "arnndn=m=bd.rnnn",
+        "equalizer=f=3000:t=q:w=1:g=2",
+    ],
 }
 AUTO_MAP = {"low": "clean", "mid": "natural", "high": "gentle"}
+MODELS_DIR = PKG_DIR / "models"
 
 CODECS = {
     "flac": ["-c:a", "flac", "-sample_fmt", "s32", "-ar", "48000"],
@@ -115,7 +128,11 @@ CODECS = {
 }
 COVER_FORMATS = ("flac", "mp3", "m4a")  # الصيغ اللي تقبل صورة الغلاف داخل الملف
 
-LOUDNORM = "loudnorm=I=-14:TP=-1.0:LRA=11"
+LOUDNORM = "loudnorm=I=-14:TP=-1.0:LRA=11"  # للقياس/التحليل فقط
+
+
+def loudnorm_filter(target):
+    return f"loudnorm=I={target}:TP=-1.0:LRA=11"
 LOSSLESS = ("flac", "alac", "wav", "ape", "wavpack", "tta")
 
 MESSAGES = {
@@ -142,6 +159,8 @@ MESSAGES = {
     "err_ffmpeg": ("فشلت المعالجة: {tail}", "Processing failed: {tail}"),
     "err_unreadable": ("ما قدرت أقرأ الملف، تأكد إنه ملف صوت صحيح.", "Couldn't read the file. Make sure it's a valid audio file."),
     "err_noaudio": ("الملف ما فيه صوت.", "The file has no audio."),
+    "err_model": ("ملف موديل الذكاء الاصطناعي ناقص: {name}", "The AI model file is missing: {name}"),
+    "err_tags": ("تعذّر حفظ البيانات (التاغات) في هذا الملف", "Couldn't save the tags into this file"),
     "err_cancelled": ("تم الإلغاء", "Cancelled"),
     "err_notfound": ("ما لقيت الملف: {source}", "File not found: {source}"),
     # أسباب تقدير الجودة
@@ -196,6 +215,12 @@ def sanitize_config(cfg):
     for key in ("light", "notify", "auto_check"):
         if isinstance(cfg.get(key), bool):
             out[key] = cfg[key]
+    if cfg.get("lufs") in LUFS_CHOICES:
+        out["lufs"] = cfg["lufs"]
+    if isinstance(cfg.get("watch"), str):
+        out["watch"] = cfg["watch"].strip()
+    if isinstance(cfg.get("watch_on"), bool):
+        out["watch_on"] = cfg["watch_on"]
     for key in ("bass", "treble"):
         try:
             out[key] = max(-6, min(6, int(cfg.get(key, 0))))
@@ -392,11 +417,11 @@ def download(url, dest, cb, token=None):
 
 # ---------- ffmpeg ----------
 
-def run_ffmpeg(args, duration=None, cb=None, token=None):
+def run_ffmpeg(args, duration=None, cb=None, token=None, cwd=None):
     """يشغّل ffmpeg مع تقدّم. يرجع نص stderr."""
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
         p = popen(["ffmpeg", "-y", "-hide_banner", "-nostdin", "-nostats", "-progress", "pipe:1", *args],
-                  token, stdout=subprocess.PIPE, stderr=err)
+                  token, stdout=subprocess.PIPE, stderr=err, cwd=cwd)
         for line in p.stdout:
             if cb and duration and line.startswith("out_time_us="):
                 try:
@@ -525,8 +550,11 @@ def process_item(source, opts, cb=lambda stage, frac: None):
     set_light(opts.get("light", True))
     preset_opt = opts.get("preset", "auto")
     fmt = opts.get("format", "flac")
-    out_dir = Path(opts.get("out_dir") or DEFAULT_OUT).expanduser()
+    out_dir = Path(opts.get("out_dir") or DEFAULT_OUT).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    lufs = opts.get("lufs", -14)
+    if lufs not in LUFS_CHOICES:
+        lufs = -14
     keep_original = opts.get("keep_original", remote)
     token = opts.get("token")
     bass, treble = int(opts.get("bass", 0) or 0), int(opts.get("treble", 0) or 0)
@@ -551,7 +579,7 @@ def process_item(source, opts, cb=lambda stage, frac: None):
                     raise
             base = 0.3
         else:
-            src = Path(source).expanduser()
+            src = Path(source).expanduser().resolve()
             if not src.is_file():
                 raise EnhanceError("err_notfound", source=source)
 
@@ -571,19 +599,29 @@ def process_item(source, opts, cb=lambda stage, frac: None):
         auto = preset_opt == "auto"
         preset = AUTO_MAP[quality] if auto else preset_opt
         chain = ",".join(PRESETS[preset] + extra)
+        ln = loudnorm_filter(lufs) if lufs else None
+        cwd = None
+        if "arnndn" in chain:  # موديل الذكاء الاصطناعي: نشغّل ffmpeg داخل مجلد الموديلات ونكتب المسار نسبيًا
+            for name in re.findall(r"arnndn=m=([\w.\-]+)", chain):
+                if not (MODELS_DIR / name).is_file():
+                    raise EnhanceError("err_model", name=name)
+            cwd = str(MODELS_DIR)
 
-        # المرحلة 1: قياس بعد الفلاتر عشان التطبيع يكون دقيق
-        m = parse_loudnorm_json(run_ffmpeg(
-            ["-i", str(src), "-vn", "-af", f"{chain},{LOUDNORM}:print_format=json", "-f", "null", "-"],
-            dur, sub(cb, "st_measure", t(0.12), t(0.45)), token)) or {}
-        keys = ("input_i", "input_lra", "input_tp", "input_thresh", "target_offset")
-        if all(isinstance(m.get(k), float) and math.isfinite(m[k]) for k in keys):
-            ln2 = (f"{LOUDNORM}:measured_I={m['input_i']}:measured_LRA={m['input_lra']}"
-                   f":measured_TP={m['input_tp']}:measured_thresh={m['input_thresh']}"
-                   f":offset={m['target_offset']}:linear=true:print_format=json")
-        else:  # ملف صامت أو قياس غير صالح: نرجع للتطبيع المباشر
-            ln2 = f"{LOUDNORM}:print_format=json"
-        final_chain = f"{chain},{ln2},alimiter=limit=0.95"
+        if ln:
+            # المرحلة 1: قياس بعد الفلاتر عشان التطبيع يكون دقيق
+            m = parse_loudnorm_json(run_ffmpeg(
+                ["-i", str(src), "-vn", "-af", f"{chain},{ln}:print_format=json", "-f", "null", "-"],
+                dur, sub(cb, "st_measure", t(0.12), t(0.45)), token, cwd)) or {}
+            keys = ("input_i", "input_lra", "input_tp", "input_thresh", "target_offset")
+            if all(isinstance(m.get(k), float) and math.isfinite(m[k]) for k in keys):
+                ln2 = (f"{ln}:measured_I={m['input_i']}:measured_LRA={m['input_lra']}"
+                       f":measured_TP={m['input_tp']}:measured_thresh={m['input_thresh']}"
+                       f":offset={m['target_offset']}:linear=true:print_format=json")
+            else:  # ملف صامت أو قياس غير صالح: نرجع للتطبيع المباشر
+                ln2 = f"{ln}:print_format=json"
+            final_chain = f"{chain},{ln2},alimiter=limit=0.95"
+        else:  # بدون تطبيع: نحافظ على مستوى الأغنية، والـ limiter يمنع التشويه فقط
+            final_chain = f"{chain},alimiter=limit=0.95"
 
         stem = safe_stem(opts.get("name") or src.stem)
         suffix = f".{fmt}"
@@ -603,8 +641,12 @@ def process_item(source, opts, cb=lambda stage, frac: None):
         else:
             args += ["-vn", "-map", "0:a:0"]
         args += ["-map_metadata", "0", "-af", final_chain, *CODECS[fmt], str(out)]
-        text = run_ffmpeg(args, dur, sub(cb, "st_process", t(0.45), t(0.97)), token)
+        text = run_ffmpeg(args, dur, sub(cb, "st_process", t(0.45), t(0.97)), token, cwd)
         after = parse_loudnorm_json(text) or {}
+        if not ln:  # بدون تطبيع ما فيه قياس جاهز: نقيس الناتج للتقرير
+            after = parse_loudnorm_json(run_ffmpeg(
+                ["-i", str(out), "-vn", "-af", f"{LOUDNORM}:print_format=json", "-f", "null", "-"],
+                dur, None, token)) or {}
 
         original_path = None
         if keep_original:
@@ -626,10 +668,87 @@ def process_item(source, opts, cb=lambda stage, frac: None):
             "reason_key": reason_key, "reason_params": reason_params,
             "preset": preset, "auto": auto,
             "lufs_before": an["lufs"], "tp_before": an["tp"],
-            "lufs_after": after.get("output_i"), "tp_after": after.get("output_tp"),
-            "duration": info["duration"], "format": fmt,
+            "lufs_after": after.get("output_i") if ln else after.get("input_i"),
+            "tp_after": after.get("output_tp") if ln else after.get("input_tp"),
+            "lufs_target": lufs or None, "duration": info["duration"], "format": fmt,
         },
     }
+
+
+AUDIO_EXTS = {".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus", ".wma", ".aiff", ".aif", ".ape", ".mka"}
+VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".flv", ".wmv"}  # نأخذ الصوت منها فقط
+MEDIA_EXTS = AUDIO_EXTS | VIDEO_EXTS
+TAG_KEYS = ("title", "artist", "album")
+
+
+def collect_media(paths, limit=2000):
+    """ملفات اختارها المستخدم + محتوى المجلدات (بشكل متداخل) المفلتر بامتدادات الصوت/الفيديو."""
+    out, seen = [], set()
+    for raw in paths:
+        p = Path(raw).expanduser()
+        found = []
+        if p.is_file():
+            found = [p]
+        elif p.is_dir():
+            for root, dirs, files in os.walk(p):
+                dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+                for name in sorted(files):
+                    if not name.startswith(".") and Path(name).suffix.lower() in MEDIA_EXTS:
+                        found.append(Path(root) / name)
+        for f in found:
+            key = str(f.resolve())
+            if key not in seen:
+                seen.add(key)
+                out.append(Path(key))
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def read_tags(path):
+    """يرجع {title, artist, album, has_cover} لملف صوت."""
+    r = run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)])
+    if r.returncode != 0:
+        raise EnhanceError("err_unreadable")
+    j = json.loads(r.stdout)
+    tags = {k.lower(): v for k, v in (j.get("format", {}).get("tags") or {}).items()}
+    for s in j.get("streams", []):
+        if s.get("codec_type") == "audio":
+            for k, v in (s.get("tags") or {}).items():
+                tags.setdefault(k.lower(), v)
+    has_cover = any(s.get("codec_type") == "video" for s in j.get("streams", []))
+    return {**{k: tags.get(k, "") for k in TAG_KEYS}, "has_cover": has_cover}
+
+
+def write_tags(path, tags, cover=None):
+    """يكتب العنوان/الفنان/الألبوم (ويستبدل الغلاف لو انعطى) بدون إعادة ضغط الصوت. يستبدل الملف بأمان."""
+    path = Path(path)
+    ext = path.suffix.lower().lstrip(".")
+    tmp = path.with_name(f".msga_tmp_{path.name}")
+    args = ["-i", str(path)]
+    if cover and ext in COVER_FORMATS:
+        args += ["-i", str(cover), "-map", "0:a", "-map", "1:v", "-c", "copy", "-disposition:v:0", "attached_pic",
+                 "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
+    else:
+        args += ["-map", "0", "-c", "copy"]
+    args += ["-map_metadata", "0"]
+    for k in TAG_KEYS:
+        if k in tags:
+            args += ["-metadata", f"{k}={tags[k]}"]
+    if ext == "mp3":
+        args += ["-id3v2_version", "3"]
+    args.append(str(tmp))
+    try:
+        run_ffmpeg(args)
+        os.replace(tmp, path)
+    except EnhanceError:
+        raise EnhanceError("err_tags")
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def spectrogram(src, out_png):

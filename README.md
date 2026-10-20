@@ -21,6 +21,11 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 - **Spectrogram** (before / after) to *see* what changed, not just hear it.
 - Formats: **FLAC, MP3 320, M4A (AAC 256), Opus 192, WAV 24-bit**.
 - **Notification** when everything is done; paste a link from the clipboard; `Ctrl+Enter` to start.
+- **Choose files or a whole folder** from the system dialog: songs are processed in place (your originals are never copied or moved), videos are turned into audio.
+- **Watch a folder**: new songs dropped into it are enhanced automatically (existing files are left alone).
+- **Edit tags** (title / artist / album) and **change the cover** of a finished song, without re-encoding.
+- **Target loudness**: -14 LUFS (Spotify / YouTube), -16 (Apple Music), -11, -9, or leave the level alone.
+- **AI noise removal** (light, local): RNNoise models through ffmpeg's `arnndn`, one for music and one for speech. Only used when you pick them.
 
 > It can't bring back detail a low-quality source never had (a 64 kbps clip gets cleaner and clearer, not studio quality).
 
@@ -34,7 +39,12 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 
 ### Windows: just download the app (no Python, no ffmpeg install)
 
-Go to the **[Releases](../../releases/latest)** page, download `Make-Sound-Great-Again-windows.zip`, extract it, and double-click **`Make Sound Great Again.exe`**. ffmpeg is already inside. (Windows needs the Edge WebView2 runtime, already present on Windows 10/11.)
+Go to the **[Releases](../../releases/latest)** page and download either:
+
+- **`Make-Sound-Great-Again-Setup.exe`**: a normal installer (per-user, no admin rights, Start menu + optional desktop shortcut, uninstaller), or
+- `Make-Sound-Great-Again-windows.zip`: portable; extract it and double-click **`Make Sound Great Again.exe`**.
+
+ffmpeg is already inside. **Updates install themselves** from inside the app (Settings → Check for updates → Update): it downloads the new version, verifies its SHA-256, replaces its own files and restarts. (Windows needs the Edge WebView2 runtime, already present on Windows 10/11.)
 Windows SmartScreen may warn about an unsigned app: *More info → Run anyway*.
 
 ### From source (all systems)

@@ -8,5 +8,9 @@
   https://github.com/FFmpeg/FFmpeg . You can replace the bundled `ffmpeg.exe` / `ffprobe.exe` (in the `bin` folder)
   with any other build.
 
+- **RNNoise noise-suppression models** (`msga/models/mp.rnnn`, `bd.rnnn`): trained models from
+  https://github.com/GregorR/rnnoise-models (the repository states they are not subject to copyright), based on
+  RNNoise by Xiph.Org (BSD-3-Clause) https://github.com/xiph/rnnoise . They are applied through ffmpeg's `arnndn` filter.
+
 The Thmanyah (ثمانية) font is **not** bundled: its licence doesn't allow redistribution. If you have it installed
 on your system, the app uses it automatically.
