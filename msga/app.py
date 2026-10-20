@@ -12,7 +12,7 @@ import time
 import urllib.request
 import webbrowser
 
-from . import core, server
+from . import core, server, winctl
 from .version import APP_NAME, VERSION
 
 DESKTOP_ONLY = core.IS_WIN or core.IS_MAC  # هذي الأنظمة: نافذة برنامج، بدون متصفح
@@ -62,20 +62,31 @@ def show_error(text):
 
 
 def pick_window_runner():
-    """يرجع دالة تفتح نافذة مستقلة (تنتظر لين تنقفل)، أو None لو ما فيه طريقة على هذا الجهاز."""
+    """يرجع دالة تفتح نافذة مستقلة (تنتظر لين تنقفل)، أو None لو ما فيه طريقة على هذا الجهاز.
+    الدالة تاخذ (url, geometry) حيث geometry = (w, h, x, y, on_top) أو None للحجم العادي."""
     icon = str(core.ROOT / "assets" / "icon.png")
     if sys.platform.startswith("linux"):
         from . import window
         if window.available():
-            return lambda url: window.open_window(url, APP_NAME, icon)
+            def run_gtk(url, geo=None):
+                if geo:
+                    w, h, x, y, top = geo
+                    return window.open_window(url, APP_NAME, icon, w, h, x, y, top)
+                return window.open_window(url, APP_NAME, icon)
+            return run_gtk
         return None
     try:
         import webview  # pywebview (ويندوز / ماك): خفيفة، تستخدم محرك العرض الموجود في النظام
     except ImportError:
         return None
 
-    def run(url):
-        webview.create_window(APP_NAME, url, width=720, height=900, min_size=(520, 600))
+    def run(url, geo=None):
+        kw = dict(width=720, height=900, min_size=(360, 200))
+        if geo:
+            w, h, x, y, top = geo
+            kw.update(width=w, height=h, x=x, y=y, on_top=top)
+        win = webview.create_window(APP_NAME, url, **kw)
+        winctl.register(win, "pywebview")
         webview.start()
     return run
 
@@ -119,6 +130,7 @@ def selftest():
     url = f"http://{server.HOST}:{server.STATE.port}"
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     win = webview.create_window(APP_NAME, url, width=720, height=900)
+    winctl.register(win, "pywebview")
     ok = []
 
     def probe():
@@ -126,17 +138,31 @@ def selftest():
         while time.time() < deadline:
             try:
                 if win.evaluate_js("document.getElementById('go') !== null && document.title") == APP_NAME:
-                    ok.append(True)
+                    ok.append("page")
                     break
             except Exception:
                 pass
             time.sleep(1)
+        if ok:  # وضع المشغّل المصغّر: النافذة تتصغّر لمستطيل ثم ترجع
+            try:
+                winctl.set_mode("mini")
+                time.sleep(1.5)
+                mini = (win.width, win.height)
+                winctl.set_mode("full")
+                time.sleep(1.5)
+                full = (win.width, win.height)
+                print(f"mini window: {mini}, restored: {full}", flush=True)
+                if 380 <= mini[0] <= 600 and mini[1] < 400 and full[0] > mini[0]:
+                    ok.append("mini")
+            except Exception as e:
+                print("mini mode failed:", e, flush=True)
         win.destroy()
 
     webview.start(probe)
     httpd.shutdown()
-    print("window selftest:", "OK" if ok else "FAILED", flush=True)
-    sys.exit(0 if ok else 1)
+    passed = ok == ["page", "mini"]
+    print("window selftest:", "OK" if passed else f"FAILED {ok}", flush=True)
+    sys.exit(0 if passed else 1)
 
 
 def main(argv=None):
@@ -179,8 +205,15 @@ def main(argv=None):
 
     if window_mode:
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        geo = None
+        cfg = core.load_config()
+        if cfg.get("start_player"):  # المستخدم اختار: البرنامج يفتح مباشرة بوضع المشغّل المصغّر
+            w, h, x, y = winctl.mini_geometry(cfg.get("mini_corner", "bottom"))
+            geo = (w, h, x, y, True)
+            winctl.start_in_mini()
+            url += "/?view=player"
         try:
-            runner(url)
+            runner(url, geo)
             httpd.shutdown()
             return
         except Exception as e:

@@ -22,7 +22,11 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 - Formats: **FLAC, MP3 320, M4A (AAC 256), Opus 192, WAV 24-bit**.
 - **Notification** when everything is done; paste a link from the clipboard; `Ctrl+Enter` to start.
 - **Paste any link in the box**: YouTube, TikTok, SoundCloud, Instagram, and **Spotify songs, albums and playlists**. Playlists are detected automatically; everything is downloaded as audio only, enhanced and saved into the folder you chose in Settings. (Spotify's own audio is protected, so for Spotify links the app reads the song names from the public page and downloads each song from YouTube, picking the result with the same length. Public Spotify pages list up to about 50-100 songs of a long playlist.) By default only the enhanced audio is kept (no second "original" copy), to save disk space.
-- **Built-in player** (second tab): open files or a folder from your computer and it plays everything in order, with previous / next, seek, volume, shuffle and repeat. Plays **every format** (formats the system can't play natively are converted on the fly with ffmpeg) and **videos play their audio only**.
+- **Player mode**: the headphones button (next to Settings) turns the window into a small rectangle near a screen corner (top or bottom, kept away from the very edge), always on top, with previous / play / next, seek, volume, shuffle, repeat, a queue you can expand, and a button back to the enhancer. The little pin on that button makes the app **open straight in player mode**. The **+** button adds songs, a whole folder or an `.m3u` playlist to the queue.
+- **Enhanced songs go to the player** automatically (and start playing if nothing is playing); finished results collapse to one line instead of piling up.
+- **iOS-style menus** for preset / format / loudness, with an explanation of each option on hover. The number of songs processed at once is chosen automatically for your computer.
+- **One-click update**: *Settings → Update the app* (or the banner) checks, downloads, verifies, closes and reopens the app by itself.
+- **Built-in player**: open files or a folder from your computer and it plays everything in order, with previous / next, seek, volume, shuffle and repeat. Plays **every format** (formats the system can't play natively are converted on the fly with ffmpeg) and **videos play their audio only**.
 - **Choose files or a whole folder** from the system dialog: songs are processed in place (your originals are never copied or moved), videos are turned into audio.
 - **Watch a folder**: new songs dropped into it are enhanced automatically (existing files are left alone).
 - **Edit tags** (title / artist / album) and **change the cover** of a finished song, without re-encoding.
@@ -105,7 +109,7 @@ Packaged builds update by downloading the new release (the app opens the downloa
 ## Fonts
 
 - The title uses **Audiowide** (SIL OFL 1.1, bundled, see `msga/web/fonts`).
-- Arabic text uses the **Thmanyah (ثمانية) font if it's installed on your system**. It is *not* included here because its license doesn't allow redistribution; download it from Thmanyah's official site and install it, and the app picks it up automatically. Without it, a fallback font is used.
+- Arabic text uses the **Thmanyah (ثمانية) font**. The Windows build embeds it in obfuscated form, which its license allows for packaged software. The font files are **not** in this repository and must not be redistributed: they reach the build only through encrypted repository secrets. When you run from source, the app uses Thmanyah if it's installed on your system, and otherwise a fallback font.
 
 ## Development
 

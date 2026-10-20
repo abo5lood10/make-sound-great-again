@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 _HOME = tempfile.mkdtemp(prefix="msga_test_home_")
 os.environ["MSGA_HOME"] = _HOME
 
-from msga import core, server, spotify, updater  # noqa: E402
+from msga import core, fontpack, server, spotify, updater, winctl  # noqa: E402
 
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
@@ -569,6 +569,111 @@ class ErrorSummary(unittest.TestCase):
         self.assertIn("Error opening model", out)
         self.assertNotIn("pcm_s16le", out)
         self.assertEqual(core._ffmpeg_error_summary("a\nb\nc\nd"), "b | c | d")
+
+
+class V14Features(unittest.TestCase):
+    def test_fontpack_roundtrip_hides_font_signature(self):
+        blob = fontpack.pack({"r": (400, b"wOF2" + b"x" * 500), "b": (700, b"wOF2" + b"y" * 300)})
+        self.assertNotIn(b"wOF2", blob)
+        out = fontpack.unpack(blob)
+        self.assertEqual(out["r"], (400, b"wOF2" + b"x" * 500))
+        self.assertEqual(out["b"][0], 700)
+        self.assertEqual(fontpack.unpack(b"garbage"), {})
+
+    def test_m3u_playlist_and_auto_jobs(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "sub").mkdir()
+        (d / "a.mp3").write_bytes(b"x")
+        (d / "sub" / "b.flac").write_bytes(b"x")
+        (d / "list.m3u8").write_text("#EXTM3U\n#EXTINF:1,A\na.mp3\nsub/b.flac\nmissing.mp3\n", encoding="utf-8")
+        self.assertEqual([p.name for p in core.collect_media([str(d / "list.m3u8")])], ["a.mp3", "b.flac"])
+        self.assertTrue(2 <= core.auto_jobs() <= 8)
+
+    def test_new_config_keys(self):
+        cfg = core.sanitize_config({"start_player": True, "mini_corner": "top", "auto_player": False})
+        self.assertEqual((cfg["start_player"], cfg["mini_corner"], cfg["auto_player"]), (True, "top", False))
+        self.assertEqual(core.sanitize_config({"mini_corner": "left"})["mini_corner"], "bottom")
+
+    def test_mini_geometry_stays_off_the_screen_edge(self):
+        w, h, x, y = winctl.mini_geometry("bottom", screen=(1920, 1080))
+        self.assertEqual((w, h), winctl.MINI)
+        self.assertEqual(x, 1920 - w - winctl.MARGIN)
+        self.assertGreaterEqual(1080 - (y + h), winctl.MARGIN)
+        self.assertEqual(winctl.mini_geometry("top", screen=(1920, 1080))[3], winctl.MARGIN)
+
+    def test_set_mode_without_window_is_harmless(self):
+        saved = dict(winctl._state)
+        try:
+            winctl._state.update(win=None)
+            self.assertFalse(winctl.set_mode("mini"))
+        finally:
+            winctl._state.update(saved)
+
+    def test_set_mode_saves_and_restores_geometry(self):
+        class FakeWin:
+            width, height, x, y, on_top = 720, 900, 10, 20, False
+
+            def resize(self, w, h):
+                self.width, self.height = w, h
+
+            def move(self, x, y):
+                self.x, self.y = x, y
+        saved = dict(winctl._state)
+        try:
+            win = FakeWin()
+            winctl._state.update(win=win, kind="fake", saved=None, mode="full")
+            with mock.patch.object(winctl, "screen_size", return_value=(1920, 1080)):
+                self.assertTrue(winctl.set_mode("mini"))
+                self.assertEqual((win.width, win.height, win.on_top), (*winctl.MINI, True))
+                winctl.set_mode("mini_tall")
+                self.assertEqual(win.height, winctl.MINI_TALL[1])
+                winctl.set_mode("full")
+            self.assertEqual((win.width, win.height, win.x, win.y, win.on_top), (720, 900, 10, 20, False))
+        finally:
+            winctl._state.clear()
+            winctl._state.update(saved)
+
+
+class UiFontServing(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.httpd = server.make_server("window")
+        cls.port = server.STATE.port
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def get(self, path):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        c.request("GET", path)
+        r = c.getresponse()
+        data = r.read()
+        c.close()
+        return r.status, data
+
+    def test_font_injected_with_session_token_and_pack_not_downloadable(self):
+        old = server.STATE.ui_font
+        server.STATE.ui_font = {"r": (400, b"wOF2-test")}
+        try:
+            st, html = self.get("/")
+            self.assertIn(f"/uifont/{server.STATE.font_token}/r".encode(), html)
+            st, data = self.get(f"/uifont/{server.STATE.font_token}/r")
+            self.assertEqual((st, data), (200, b"wOF2-test"))
+            self.assertEqual(self.get("/uifont/wrong-token/r")[0], 404)
+            self.assertEqual(self.get("/static/_uifont.bin")[0], 404)
+        finally:
+            server.STATE.ui_font = old
+
+    def test_no_font_means_no_injection(self):
+        old = server.STATE.ui_font
+        server.STATE.ui_font = {}
+        try:
+            self.assertNotIn(b"/uifont/", self.get("/")[1])
+        finally:
+            server.STATE.ui_font = old
 
 
 class Startup(unittest.TestCase):

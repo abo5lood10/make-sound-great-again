@@ -34,7 +34,7 @@ def _lines(text):
 
 
 def _pick_windows(kind):
-    exts = ";".join(f"*{e}" for e in sorted(core.MEDIA_EXTS))
+    exts = ";".join(f"*{e}" for e in sorted(core.MEDIA_EXTS | core.PLAYLIST_EXTS))
     if kind == "folder":
         body = ("$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
                 "if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }")

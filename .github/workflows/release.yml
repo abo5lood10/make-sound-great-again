@@ -25,6 +25,18 @@ jobs:
           python-version: "3.12"
       - name: Install build requirements
         run: python -m pip install -r requirements.txt pyinstaller
+      - name: Embed the Arabic UI font (from repository secrets, never stored in the repo)
+        shell: bash
+        env:
+          THM_PACK_1: ${{ secrets.THM_PACK_1 }}
+          THM_PACK_2: ${{ secrets.THM_PACK_2 }}
+          THM_PACK_3: ${{ secrets.THM_PACK_3 }}
+          THM_PACK_4: ${{ secrets.THM_PACK_4 }}
+          THM_PACK_5: ${{ secrets.THM_PACK_5 }}
+          THM_PACK_6: ${{ secrets.THM_PACK_6 }}
+          THM_PACK_7: ${{ secrets.THM_PACK_7 }}
+          THM_PACK_8: ${{ secrets.THM_PACK_8 }}
+        run: python scripts/assemble_fontpack.py
       - name: Bundle ffmpeg (Windows, LGPL build, checksum verified)
         if: matrix.bundle_ffmpeg
         shell: pwsh
@@ -75,6 +87,7 @@ jobs:
           echo " <- app is up"
           STATE=$(curl -fs http://127.0.0.1:8765/api/state)
           echo "$STATE" | python -c "import json,sys; d=json.load(sys.stdin); print('missing tools:', d['missing'])"
+          echo "$STATE" | python -c "import json,sys; d=json.load(sys.stdin); print('ui font embedded:', d['ui_font']); sys.exit(0 if d['ui_font'] else 1)" || { echo "the Arabic UI font is missing from the build"; exit 1; }
           if [ "${{ matrix.bundle_ffmpeg }}" = "true" ]; then
             echo "$STATE" | python -c "import json,sys; d=json.load(sys.stdin); sys.exit(1 if d['missing'] else 0)" || { echo "bundled build is missing tools"; exit 1; }
           fi

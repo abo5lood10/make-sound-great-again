@@ -12,5 +12,6 @@
   https://github.com/GregorR/rnnoise-models (the repository states they are not subject to copyright), based on
   RNNoise by Xiph.Org (BSD-3-Clause) https://github.com/xiph/rnnoise . They are applied through ffmpeg's `arnndn` filter.
 
-The Thmanyah (ثمانية) font is **not** bundled: its licence doesn't allow redistribution. If you have it installed
-on your system, the app uses it automatically.
+- **Thmanyah (ثمانية) font** © thmanyah Publishing and Distribution: embedded only in the packaged Windows build, in
+  obfuscated form, as its licence permits for compiled/packaged/obfuscated software products. The font files are not
+  part of this repository, are not available for download here, and may only be obtained from https://thmanyah.com .

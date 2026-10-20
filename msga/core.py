@@ -62,7 +62,8 @@ DEFAULT_OUT = str(Path.home() / "Music" / "Make Sound Great Again")
 DEFAULT_CONFIG = {"preset": "auto", "format": "flac", "jobs": 1, "out": DEFAULT_OUT,
                   "lang": "ar", "theme": "system", "light": True,
                   "bass": 0, "treble": 0, "notify": True, "auto_check": True,
-                  "lufs": -14, "watch": "", "watch_on": False, "keep_original": False}
+                  "lufs": -14, "watch": "", "watch_on": False, "keep_original": False,
+                  "auto_player": True, "start_player": False, "mini_corner": "bottom"}
 LUFS_CHOICES = (0, -9, -11, -14, -16)  # 0 = بدون تطبيع
 
 # ملاحظة: كل النماذج تنتهي بتطبيع مستوى الصوت (مرحلتين) وlimiter عشان ما يصير تشويه.
@@ -215,7 +216,9 @@ def sanitize_config(cfg):
         out["lang"] = cfg["lang"]
     if cfg.get("theme") in ("system", "light", "dark"):
         out["theme"] = cfg["theme"]
-    for key in ("light", "notify", "auto_check", "keep_original"):
+    if cfg.get("mini_corner") in ("top", "bottom"):
+        out["mini_corner"] = cfg["mini_corner"]
+    for key in ("light", "notify", "auto_check", "keep_original", "auto_player", "start_player"):
         if isinstance(cfg.get(key), bool):
             out[key] = cfg[key]
     if cfg.get("lufs") in LUFS_CHOICES:
@@ -737,13 +740,41 @@ MEDIA_EXTS = AUDIO_EXTS | VIDEO_EXTS
 TAG_KEYS = ("title", "artist", "album")
 
 
+PLAYLIST_EXTS = {".m3u", ".m3u8"}
+
+
+def auto_jobs():
+    """أكبر عدد ملفات يقدر الجهاز يعالجها بنفس الوقت (نترك نواة للنظام). مع الأولوية المنخفضة الجهاز يبقى سريع."""
+    return max(2, min(8, (os.cpu_count() or 2) - 1))
+
+
+def read_m3u(path):
+    """قائمة تشغيل m3u / m3u8: المسارات (النسبية من مكان الملف) للملفات الموجودة فعلًا."""
+    p = Path(path)
+    out = []
+    try:
+        text = p.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        f = Path(line) if Path(line).is_absolute() else (p.parent / line)
+        if f.is_file() and f.suffix.lower() in MEDIA_EXTS:
+            out.append(f)
+    return out
+
+
 def collect_media(paths, limit=2000):
-    """ملفات اختارها المستخدم + محتوى المجلدات (بشكل متداخل) المفلتر بامتدادات الصوت/الفيديو."""
+    """ملفات اختارها المستخدم + محتوى المجلدات (بشكل متداخل) المفلتر بامتدادات الصوت/الفيديو + قوائم m3u."""
     out, seen = [], set()
     for raw in paths:
         p = Path(raw).expanduser()
         found = []
-        if p.is_file():
+        if p.is_file() and p.suffix.lower() in PLAYLIST_EXTS:
+            found = read_m3u(p)
+        elif p.is_file():
             found = [p]
         elif p.is_dir():
             for root, dirs, files in os.walk(p):

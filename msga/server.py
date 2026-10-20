@@ -1,6 +1,7 @@
 """خادم محلي خفيف (مكتبة بايثون القياسية فقط) يقدّم الواجهة والـ API. يستمع على 127.0.0.1 فقط."""
 import hashlib
 import json
+import secrets
 import mimetypes
 import os
 import re
@@ -16,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from . import core, picker, spotify, updater
+from . import core, fontpack, picker, spotify, updater, winctl
 from .version import APP_NAME, VERSION
 
 HOST = "127.0.0.1"
@@ -56,6 +57,8 @@ class State:
         self.last_seen = time.time()
         self.port = BASE_PORT
         self.thmanyah = None
+        self.ui_font = None          # {key: (weight, bytes)} خط الواجهة المضمّن (لو موجود)
+        self.font_token = secrets.token_urlsafe(12)
         self.httpd = None
         self.finished_batch = 0
         self.spec_lock = threading.Lock()
@@ -462,9 +465,13 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path = url.path
         if path == "/":
-            self._serve_file(core.WEB_DIR, "index.html", cache=False)
+            self._serve_index()
+        elif path.startswith("/uifont/"):
+            self._serve_ui_font(path)
         elif path.startswith("/static/"):
             name = unquote(path[8:])
+            if Path(name).name.startswith("_"):  # ملفات داخلية (مثل خط الواجهة المشفّر) ما تنقدّم
+                return self.send_error(404)
             # js/css لازم تتحدّث مع كل إصدار (كاش طويل يخلي الواجهة القديمة تبقى بعد التحديث)؛ الخطوط والصور كاش طويل
             self._serve_file(core.WEB_DIR, name, cache=name.endswith((".ttf", ".svg", ".png")))
         elif path.startswith("/files/"):
@@ -499,6 +506,36 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
+    def _serve_index(self):
+        """الصفحة الرئيسية + تعريف خط الواجهة العربي المضمّن (برابط مؤقت لكل تشغيل، بدون كاش)."""
+        html = (core.WEB_DIR / "index.html").read_text(encoding="utf-8")
+        css = ""
+        for key, (weight, _data) in (STATE.ui_font or {}).items():
+            css += (f'@font-face{{font-family:"MSGA Arabic UI";src:url("/uifont/{STATE.font_token}/{key}") '
+                    f'format("woff2");font-weight:{weight};font-display:swap}}')
+        if css:
+            html = html.replace("<!--UIFONT-->", f"<style>{css}</style>")
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_ui_font(self, path):
+        parts = path.split("/")
+        font = (STATE.ui_font or {}).get(parts[-1]) if len(parts) == 4 and parts[2] == STATE.font_token else None
+        if not font or self.headers.get("Sec-Fetch-Dest", "font") not in ("font", ""):
+            return self.send_error(404)
+        data = font[1]
+        self.send_response(200)
+        self.send_header("Content-Type", "font/woff2")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _state(self):
         if STATE.thmanyah is None:
             STATE.thmanyah = core.find_thmanyah()
@@ -508,7 +545,7 @@ class Handler(BaseHTTPRequestHandler):
                 "items": items, "presets": list(core.PRESETS), "formats": list(core.CODECS),
                 "thmanyah": STATE.thmanyah, "missing": core.missing_tools(need_download=True),
                 "repo_url": updater.repo_url(), "releases_url": updater.releases_url(),
-                "frozen": updater.FROZEN, "platform": sys.platform, "pick": picker.available(),
+                "frozen": updater.FROZEN, "platform": sys.platform, "pick": picker.available(), "window": winctl.available(), "ui_font": bool(STATE.ui_font),
                 "ai_models": all((core.MODELS_DIR / n).is_file() for n in ("mp.rnnn", "bd.rnnn"))}
 
     def _spectrogram(self, q):
@@ -551,6 +588,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/pick": self._pick, "/api/submit_paths": self._submit_paths, "/api/tags": self._set_tags,
             "/api/player/open": self._player_open, "/api/player/paths": self._player_paths,
             "/api/player/add_item": self._player_add_item, "/api/player/clear": self._player_clear,
+            "/api/window/mode": self._window_mode,
         }
         fn = routes.get(path)
         if fn:
@@ -561,7 +599,7 @@ class Handler(BaseHTTPRequestHandler):
     @staticmethod
     def _opts_static(cfg):
         return {"preset": cfg["preset"], "format": cfg["format"], "out_dir": cfg["out"], "light": cfg["light"],
-                "bass": cfg["bass"], "treble": cfg["treble"], "lufs": cfg["lufs"]}, cfg["jobs"]
+                "bass": cfg["bass"], "treble": cfg["treble"], "lufs": cfg["lufs"]}, core.auto_jobs()
 
     def _opts(self, d):
         cfg = core.load_config()
@@ -581,7 +619,7 @@ class Handler(BaseHTTPRequestHandler):
         if lufs not in core.LUFS_CHOICES:
             return None
         return {"preset": preset, "format": fmt, "out_dir": cfg["out"], "light": cfg["light"],
-                "bass": bass, "treble": treble, "lufs": lufs, "keep_original": cfg["keep_original"]}, cfg["jobs"]
+                "bass": bass, "treble": treble, "lufs": lufs, "keep_original": cfg["keep_original"]}, core.auto_jobs()
 
     def _submit(self, d):
         parsed = self._opts(d)
@@ -661,7 +699,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False})
         if it["kind"] == "file" and not Path(it["_source"]).is_file():
             return self._json({"ok": False})
-        jobs = core.load_config()["jobs"]
+        jobs = core.auto_jobs()
         it.update(status="waiting", error=None, pct=0, stage_key=None, _token=core.CancelToken())
         submit_item(it, jobs)
         self._json({"ok": True})
@@ -731,6 +769,11 @@ class Handler(BaseHTTPRequestHandler):
     def _restart(self, _d):
         self._json({"ok": True})
         threading.Thread(target=restart_app, daemon=True).start()
+
+    def _window_mode(self, d):
+        mode = d.get("mode") if d.get("mode") in ("full", "mini", "mini_tall") else "full"
+        corner = d.get("corner") if d.get("corner") in ("top", "bottom") else core.load_config()["mini_corner"]
+        self._json({"ok": winctl.set_mode(mode, corner), "window": winctl.available()})
 
     # ---- المشغّل ----
     def _player_open(self, d):
@@ -941,6 +984,11 @@ def make_server(mode="browser"):
             httpd = QuietServer((HOST, port), Handler)
             httpd.daemon_threads = True
             STATE.httpd = httpd
+            if STATE.ui_font is None:
+                try:
+                    STATE.ui_font = fontpack.unpack((core.WEB_DIR / "_uifont.bin").read_bytes())
+                except OSError:
+                    STATE.ui_font = {}
             if not STATE.items:
                 load_history()
             prune_uploads()
