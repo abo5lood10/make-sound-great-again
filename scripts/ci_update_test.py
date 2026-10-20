@@ -58,15 +58,23 @@ def kill_all():
         subprocess.run(["taskkill", "/F", "/IM", f"{APP_NAME}.exe"], check=False, capture_output=True)
 
 
+work = None
+
+
 def main():
     dist = Path(sys.argv[1]).resolve()
+    global work
     work = Path(tempfile.mkdtemp(prefix="msga_updtest_"))
+    os.environ["MSGA_HOME"] = str(work / "home")
     install = work / "install" / dist.name
     shutil.copytree(dist, install, symlinks=True)
     payload = work / "payload" / dist.name
     shutil.copytree(dist, payload, symlinks=True)
-    marker_rel = Path("Contents/Resources/UPDATED.txt") if IS_MAC else Path("UPDATED.txt")
-    (payload / marker_rel).write_text("updated")
+    # ويندوز: نضيف ملف علامة للإصدار "الجديد". ماك: ما نعدّل الحزمة (لأن أي تعديل يبطل توقيعها ويمنع تشغيلها)،
+    # ونكتشف الاستبدال من تغيّر هوية ملف البرنامج (ditto ينسخ ملفات جديدة).
+    marker_rel = Path("UPDATED.txt")
+    if not IS_MAC:
+        (payload / marker_rel).write_text("updated")
 
     fake = work / "fake"
     fake.mkdir()
@@ -85,6 +93,7 @@ def main():
     env = dict(os.environ, MSGA_UPDATE_BASE=f"http://127.0.0.1:{FAKE_PORT}", MSGA_HOME=str(work / "home"),
                MSGA_REPO="test/test")
     exe = install / "Contents/MacOS" / APP_NAME if IS_MAC else install / f"{APP_NAME}.exe"
+    before = exe.stat().st_ino
     assert not find_port(), "another instance is already running"
     proc = subprocess.Popen([str(exe), "--no-open"], env=env)
     port = wait_for(find_port, 60, "the old app to start")
@@ -98,7 +107,10 @@ def main():
 
     wait_for(lambda: proc.poll() is not None, 60, "the old app to exit")
     print("old app exited", flush=True)
-    wait_for(lambda: (install / marker_rel).exists(), 120, "the new files to be copied over the install folder")
+    if IS_MAC:
+        wait_for(lambda: exe.exists() and exe.stat().st_ino != before, 120, "the new bundle to replace the old one")
+    else:
+        wait_for(lambda: (install / marker_rel).exists(), 120, "the new files to be copied over the install folder")
     print("files replaced", flush=True)
     new_port = wait_for(find_port, 90, "the new app to relaunch")
     print("relaunched on port", new_port, flush=True)
@@ -113,7 +125,15 @@ if __name__ == "__main__":
     except BaseException as e:  # noqa: BLE001
         kill_all()
         print("UPDATE TEST FAILED:", repr(e))
-        log = Path(os.environ.get("MSGA_HOME", "")) / "app.log"
-        if log.exists():
-            print(log.read_text(errors="replace")[-3000:])
+        for name in ("app.log", "update/update.log", "update.log"):
+            for base in (Path(os.environ.get("MSGA_HOME", "")), Path(os.environ.get("MSGA_HOME", "")) / "update"):
+                f = base / Path(name).name
+                if f.is_file():
+                    print(f"--- {f} ---\n" + f.read_text(errors="replace")[-3000:])
+        w = globals().get("work")
+        if w:
+            for sub in ("home/update", "install"):
+                d = Path(w) / sub
+                if d.is_dir():
+                    print(f"--- ls {d} ---", [p.name for p in d.iterdir()][:30])
         sys.exit(1)

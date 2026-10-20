@@ -157,22 +157,28 @@ def _expected_hash(sums_text, name):
 # ---------- النسخة الجاهزة (exe / app) ----------
 
 def _win_script(pid, src, dst, exe):
+    # ملاحظة: ما نستخدم timeout لأنه يفشل لما تكون الإدخال مُعاد توجيهه (البرنامج يشغّل السكربت بدون طرفية)،
+    # ونتجنب كتل ( ) لأن %var% داخلها يُقرأ قبل التنفيذ. نكتب كل خطوة في update.log للتشخيص.
     return "\r\n".join([
         "@echo off", "chcp 65001 >nul",
         f'set "PID={pid}"', f'set "SRC={src}"', f'set "DST={dst}"', f'set "EXE={exe}"',
+        'set "LOG=%~dp0update.log"',
+        'echo [%date% %time%] waiting for PID %PID% > "%LOG%"',
         "set /a tries=0",
         ":wait",
         'tasklist /FI "PID eq %PID%" /NH 2>nul | findstr /C:" %PID% " >nul',
-        "if not errorlevel 1 (",
-        "  set /a tries+=1",
-        "  if %tries% GTR 60 goto copy",
-        "  timeout /t 1 /nobreak >nul",
-        "  goto wait",
-        ")",
+        "if errorlevel 1 goto copy",
+        "set /a tries+=1",
+        "if %tries% GTR 90 goto copy",
+        "ping -n 2 127.0.0.1 >nul",
+        "goto wait",
         ":copy",
-        'robocopy "%SRC%" "%DST%" /E /NFL /NDL /NJH /NJS /NP /R:10 /W:1 >nul',
+        'echo [%date% %time%] copying "%SRC%" to "%DST%" >> "%LOG%"',
+        'robocopy "%SRC%" "%DST%" /E /NFL /NDL /NJH /NJS /NP /R:20 /W:1 >> "%LOG%" 2>&1',
+        'echo robocopy exit code %errorlevel% >> "%LOG%"',
         'start "" "%DST%\\%EXE%"',
         'rd /s /q "%SRC%" >nul 2>nul',
+        'echo done >> "%LOG%"',
         '(goto) 2>nul & del "%~f0"', ""])
 
 
@@ -180,11 +186,15 @@ def _mac_script(pid, src, dst):
     q = shlex.quote
     return "\n".join([
         "#!/bin/bash", f"PID={int(pid)}", f"SRC={q(str(src))}", f"DST={q(str(dst))}",
+        'exec >> "$(dirname "$0")/update.log" 2>&1',
+        'echo "[$(date)] waiting for PID $PID"',
         'for i in $(seq 1 60); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done',
+        'echo "[$(date)] swapping $SRC -> $DST"',
         'rm -rf "$DST.old"; mv "$DST" "$DST.old"',
-        'if ditto "$SRC" "$DST"; then rm -rf "$DST.old"; else rm -rf "$DST"; mv "$DST.old" "$DST"; fi',
+        'if ditto "$SRC" "$DST"; then rm -rf "$DST.old"; else echo "ditto failed, restoring"; rm -rf "$DST"; mv "$DST.old" "$DST"; fi',
         'xattr -dr com.apple.quarantine "$DST" 2>/dev/null',
         'open "$DST"',
+        'echo "[$(date)] done"',
         'rm -rf "$(dirname "$SRC")"; rm -- "$0"', ""])
 
 
@@ -232,6 +242,7 @@ def apply_frozen():
             subprocess.Popen(["cmd", "/c", str(script)], creationflags=0x00000008 | 0x00000200,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                              close_fds=True)
+        print(f"update: swap script launched ({script})", flush=True)
         PROGRESS["state"] = "ready"
         return {"ok": True, "exit": True, "version": latest}
     except (ValueError, zipfile.BadZipFile, KeyError):
