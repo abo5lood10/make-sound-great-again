@@ -67,6 +67,7 @@ jobs:
             --add-data "THIRD_PARTY.md${{ matrix.sep }}." \
             --collect-all yt_dlp \
             --hidden-import pystray._win32 \
+            --hidden-import encodings.utf_8_sig \
             $EXTRA \
             run.py
       - name: Smoke test (the built app must start and answer)

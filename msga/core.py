@@ -914,7 +914,7 @@ def read_m3u(path):
     p = Path(path)
     out = []
     try:
-        text = p.read_text(encoding="utf-8-sig", errors="replace")
+        text = p.read_text(encoding="utf-8", errors="replace").lstrip("\ufeff")
     except OSError:
         return out
     for line in text.splitlines():

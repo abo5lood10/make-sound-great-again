@@ -242,7 +242,8 @@ def apply_frozen():
             payload = dirs[0] if len(dirs) == 1 else new
             exe = Path(sys.executable)
             script = work / "update.ps1"
-            script.write_bytes(_win_script(pid, payload, exe.parent, exe.name).encode("utf-8-sig"))
+            # BOM يدويًا: بعض النسخ المجمّعة ما فيها ترميز utf-8-sig ("unknown encoding")
+            script.write_bytes(b"\xef\xbb\xbf" + _win_script(pid, payload, exe.parent, exe.name).encode("utf-8"))
             (work / "update.log").write_text("launched by the app\n", encoding="utf-8")
             cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
                    "-File", str(script)]

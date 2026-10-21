@@ -870,6 +870,21 @@ class FrozenUpdateHelpers(unittest.TestCase):
         self.assertFalse((root / "src").exists())
 
 
+class FrozenCodecGuard(unittest.TestCase):
+    def test_no_codec_that_packaged_builds_may_lack(self):
+        """النسخة المجمّعة (PyInstaller) ما فيها دايمًا ترميز utf-8-sig: نكتب BOM يدويًا بدل ما نعتمد عليه."""
+        root = Path(__file__).resolve().parent.parent / "msga"
+        offenders = [str(p.name) for p in root.glob("*.py") if "utf-8-sig" in p.read_text(encoding="utf-8").replace(
+            "# BOM يدويًا: بعض النسخ المجمّعة ما فيها ترميز utf-8-sig", "")]
+        self.assertEqual(offenders, [])
+
+    def test_m3u_with_bom(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "a.mp3").write_bytes(b"x")
+        (d / "l.m3u").write_bytes(b"\xef\xbb\xbfa.mp3\n")
+        self.assertEqual([p.name for p in core.read_m3u(d / "l.m3u")], ["a.mp3"])
+
+
 class Updater(unittest.TestCase):
     def _zip(self, version, extra=None):
         buf = io.BytesIO()
