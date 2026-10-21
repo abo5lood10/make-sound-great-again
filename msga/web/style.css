@@ -284,3 +284,35 @@ body.mini #player.view { max-width: none; padding: 8px; }
 .mini #vol { width: 84px; accent-color: var(--blue); margin-inline-start: 6px; }
 .qwrap { padding: 0 4px; }
 .qwrap .empty { padding: 18px 0; }
+
+/* ===================== 1.5: مكتبة، كلمات، معادل ===================== */
+.qtabs { display: flex; justify-content: center; padding: 2px 0 8px; }
+.qtabs .seg button { padding: 4px 16px; }
+.lyrics { max-height: 330px; overflow-y: auto; padding: 6px 10px 14px; text-align: center; scroll-behavior: smooth; }
+.lline { padding: 5px 6px; border-radius: 8px; font-size: 15px; color: var(--sub); cursor: pointer; transition: color .2s, transform .2s, background .2s; }
+.lline:hover { background: var(--fill); }
+.lline.on { color: var(--text); font-weight: 700; transform: scale(1.04); }
+.lplain { white-space: pre-line; font-size: 14px; line-height: 1.9; }
+.lsrc { margin-top: 10px; }
+.eqpane { padding: 4px 8px 10px; }
+.eqrow { display: grid; grid-template-columns: 120px 1fr 32px; gap: 10px; align-items: center; padding: 6px 0; }
+.eqrow input { accent-color: var(--blue); }
+.eqrow output { font-size: 12px; color: var(--sub); text-align: center; direction: ltr; }
+.eqnote { margin: 6px 0; }
+.lib-tools { display: grid; gap: 10px; }
+#libSearch { width: 100%; border: 0; border-radius: 10px; background: var(--fill); color: var(--text); padding: 9px 12px; font: inherit; }
+.lib-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.lib-row .dd-btn { max-width: 160px; }
+.chk { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--sub); }
+.lib-list { list-style: none; margin: 6px 0; padding: 0; }
+.lib-list li { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; }
+.lib-list li:hover { background: var(--fill); }
+.lib-list .lt { flex: 1; min-width: 0; }
+.lib-list .ln { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-list .la { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-list .ld { font-size: 12px; color: var(--sub); direction: ltr; }
+.lib-list .lb { display: inline-flex; gap: 2px; align-items: center; }
+.ictl.danger:hover { color: var(--bad); }
+#logBox { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 11px; background: var(--fill); border-radius: 8px; padding: 8px; }
+/* عناوين إنجليزية داخل الواجهة العربية (والعكس): الاتجاه حسب النص نفسه */
+.np-title, #npArtist, .queue .t, .lib-list .ln, .lib-list .la, .song .name { unicode-bidi: plaintext; text-align: start; }

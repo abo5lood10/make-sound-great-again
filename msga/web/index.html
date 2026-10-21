@@ -12,6 +12,9 @@
 <body>
 <header class="bar">
   <div class="bar-btns">
+    <button id="libBtn" class="icon-btn" aria-label="Library">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16M9 4v16M14 4l5 16"/></svg>
+    </button>
     <div class="pm">
       <button id="pmBtn" class="icon-btn pm-btn" aria-label="Player">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
@@ -126,11 +129,38 @@
     </div>
   </section>
   <section id="qWrap" class="qwrap" hidden>
-    <div id="plEmpty" class="empty"><div data-i18n="pl_empty"></div><div class="sub" data-i18n="pl_formats"></div></div>
-    <ol id="queue" class="queue"></ol>
+    <div class="qtabs"><div class="seg" id="qTabs"><button data-v="queue" data-i18n="pl_queue"></button><button data-v="lyrics" data-i18n="lyrics"></button><button data-v="eq" data-i18n="eq"></button></div></div>
+    <div id="paneQueue">
+      <div id="plEmpty" class="empty"><div data-i18n="pl_empty"></div><div class="sub" data-i18n="pl_formats"></div></div>
+      <ol id="queue" class="queue"></ol>
+    </div>
+    <div id="paneLyrics" class="lyrics" hidden></div>
+    <div id="paneEq" class="eqpane" hidden>
+      <div class="eqrow"><span data-i18n="eq_low"></span><input type="range" id="eq0" min="-12" max="12" value="0"><output id="eq0v">0</output></div>
+      <div class="eqrow"><span data-i18n="eq_mid"></span><input type="range" id="eq1" min="-12" max="12" value="0"><output id="eq1v">0</output></div>
+      <div class="eqrow"><span data-i18n="eq_high"></span><input type="range" id="eq2" min="-12" max="12" value="0"><output id="eq2v">0</output></div>
+      <div class="eqrow"><span data-i18n="crossfade"></span><input type="range" id="xfade" min="0" max="10" value="0"><output id="xfadev">0</output></div>
+      <div class="sub eqnote" data-i18n="eq_note"></div>
+      <button id="eqReset" class="link" data-i18n="eq_reset"></button>
+    </div>
   </section>
   <input type="file" id="plInput" multiple accept="audio/*,video/*" hidden>
   <audio id="audio" preload="auto"></audio>
+  <audio id="audio2" preload="auto"></audio>
+</main>
+
+<!-- ===== المكتبة ===== -->
+<main id="library" class="view" hidden>
+  <button id="libBack" class="link back"></button>
+  <h1 class="page-title" data-i18n="library"></h1>
+  <div class="lib-tools card pad">
+    <input id="libSearch" type="search" data-i18n-ph="lib_search" spellcheck="false">
+    <div class="lib-row"><select id="libSort"></select>
+      <label class="chk"><input type="checkbox" id="libDups"> <span data-i18n="lib_dups"></span></label>
+      <button id="libPlayAll" class="tint" data-i18n="lib_play_all"></button></div>
+    <div id="libStatus" class="sub"></div>
+  </div>
+  <ol id="libList" class="lib-list"></ol>
 </main>
 
 <!-- ===== الإعدادات ===== -->
@@ -149,6 +179,10 @@
       <label class="switch"><input type="checkbox" id="keepOrig"><i></i></label></div>
     <div class="row"><div><span data-i18n="auto_player_label"></span><div class="sub" data-i18n="auto_player_hint"></div></div>
       <label class="switch"><input type="checkbox" id="autoPlayer"><i></i></label></div>
+    <div class="row"><div><span data-i18n="trim_label"></span><div class="sub" data-i18n="trim_hint"></div></div>
+      <label class="switch"><input type="checkbox" id="trimOn"><i></i></label></div>
+    <div class="row" id="trayRow" hidden><div><span data-i18n="tray_label"></span><div class="sub" data-i18n="tray_hint"></div></div>
+      <label class="switch"><input type="checkbox" id="trayClose"><i></i></label></div>
     <div class="row"><div><span data-i18n="notify_label"></span><div class="sub" data-i18n="notify_hint"></div></div>
       <label class="switch"><input type="checkbox" id="notifyOn"><i></i></label></div>
   </section>
@@ -176,6 +210,12 @@
     <div class="row col" id="updProgRow" hidden><div class="bar-track"><i id="updProgBar"></i></div></div>
     <div class="row"><div><span data-i18n="engine"></span><div class="sub" id="engStatus"></div></div>
       <button id="engUpdate" class="tint" data-i18n="update_engine"></button></div>
+  </section>
+
+  <section class="card group">
+    <div class="row"><div><span data-i18n="log_label"></span><div class="sub" id="logStatus" data-i18n="log_hint"></div></div>
+      <button id="logCopy" class="tint" data-i18n="log_copy"></button></div>
+    <div class="row col" id="logBoxRow" hidden><textarea id="logBox" rows="8" dir="ltr" readonly></textarea></div>
   </section>
 
   <button id="quit" class="link danger" data-i18n="quit" hidden></button>

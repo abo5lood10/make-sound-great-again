@@ -87,7 +87,8 @@ def pick_window_runner():
             kw.update(width=w, height=h, x=x, y=y, on_top=top)
         win = webview.create_window(APP_NAME, url, **kw)
         winctl.register(win, "pywebview")
-        webview.start()
+        from . import desktop
+        webview.start(lambda: desktop.attach(win))
     return run
 
 
@@ -143,6 +144,24 @@ def selftest():
             except Exception:
                 pass
             time.sleep(1)
+        if ok and core.IS_WIN:  # أيقونة جنب الساعة + أزرار الوسائط (نضغط «التالي» برمجيًا ونتأكد إنه وصل)
+            try:
+                from . import desktop
+                tray = desktop.start_tray(lambda name: None)
+                if tray:
+                    ok.append("tray")
+                    tray.stop()
+                got = threading.Event()
+                _, keys = desktop.start_media_keys(lambda name: got.set() if name == "next" else None)
+                if "next" in keys:
+                    import ctypes
+                    ctypes.windll.user32.keybd_event(0xB0, 0, 0, 0)
+                    ctypes.windll.user32.keybd_event(0xB0, 0, 2, 0)
+                    if got.wait(5):
+                        ok.append("keys")
+                print(f"tray/keys: {ok} registered={keys}", flush=True)
+            except Exception as e:
+                print("tray/keys failed:", e, flush=True)
         if ok:  # وضع المشغّل المصغّر: النافذة تتصغّر لمستطيل ثم ترجع
             try:
                 winctl.set_mode("mini")
@@ -160,7 +179,7 @@ def selftest():
 
     webview.start(probe)
     httpd.shutdown()
-    passed = ok == ["page", "mini"]
+    passed = ok == (["page", "tray", "keys", "mini"] if core.IS_WIN else ["page", "mini"])
     print("window selftest:", "OK" if passed else f"FAILED {ok}", flush=True)
     sys.exit(0 if passed else 1)
 

@@ -63,7 +63,8 @@ DEFAULT_CONFIG = {"preset": "auto", "format": "flac", "jobs": 1, "out": DEFAULT_
                   "lang": "ar", "theme": "system", "light": True,
                   "bass": 0, "treble": 0, "notify": True, "auto_check": True,
                   "lufs": -14, "watch": "", "watch_on": False, "keep_original": False,
-                  "auto_player": True, "start_player": False, "mini_corner": "bottom"}
+                  "auto_player": True, "start_player": False, "mini_corner": "bottom",
+                  "trim_silence": True, "tray_close": False, "eq": [0, 0, 0], "crossfade": 0}
 LUFS_CHOICES = (0, -9, -11, -14, -16)  # 0 = بدون تطبيع
 
 # ملاحظة: كل النماذج تنتهي بتطبيع مستوى الصوت (مرحلتين) وlimiter عشان ما يصير تشويه.
@@ -194,6 +195,18 @@ class EnhanceError(Exception):
         return msg(self.key, lang, **self.params)
 
 
+# ---------- السجل (آخر 400 سطر، لزر «نسخ السجل» في الإعدادات) ----------
+import collections  # noqa: E402
+
+LOG = collections.deque(maxlen=400)
+
+
+def log(text):
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    for line in str(text).rstrip().splitlines() or [""]:
+        LOG.append(f"[{stamp}] {line}")
+
+
 # ---------- الإعدادات ----------
 
 def config_path():
@@ -218,7 +231,17 @@ def sanitize_config(cfg):
         out["theme"] = cfg["theme"]
     if cfg.get("mini_corner") in ("top", "bottom"):
         out["mini_corner"] = cfg["mini_corner"]
-    for key in ("light", "notify", "auto_check", "keep_original", "auto_player", "start_player"):
+    try:
+        eq = [max(-12, min(12, int(v))) for v in cfg.get("eq", [0, 0, 0])][:3]
+        out["eq"] = eq + [0] * (3 - len(eq))
+    except (TypeError, ValueError):
+        pass
+    try:
+        out["crossfade"] = max(0, min(10, int(cfg.get("crossfade", 0))))
+    except (TypeError, ValueError):
+        pass
+    for key in ("light", "notify", "auto_check", "keep_original", "auto_player", "start_player", "trim_silence",
+                "tray_close"):
         if isinstance(cfg.get(key), bool):
             out[key] = cfg[key]
     if cfg.get("lufs") in LUFS_CHOICES:
@@ -406,6 +429,105 @@ def expand_playlist(url):
     return urls or [url]
 
 
+_NEG_WORDS = ("live", "cover", "remix", "sped up", "speed up", "slowed", "8d", "karaoke", "instrumental", "reaction",
+              "nightcore", "reverb", "bass boosted", "mashup", "lofi", "lo-fi", "concert", "acoustic version",
+              "مسرع", "ريمكس", "حفلة", "لايف", "كاريوكي", "بطيء")
+
+
+_AR = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ة": "ه", "ى": "ي", "ؤ": "و", "ئ": "ي"})
+_TASHKEEL = re.compile("[\u064B-\u0652\u0640]")
+_ALLOWED_EXTRA = {"official", "audio", "video", "hd", "hq", "4k", "remaster", "remastered", "lyrics", "lyric", "music",
+                  "feat", "ft", "with", "explicit", "clean", "mv", "visualizer", "من", "فيديو", "كلمات", "حصريا"}
+
+
+def _norm(text):
+    t = _TASHKEEL.sub("", str(text).lower()).translate(_AR)
+    return re.sub(r"[^\w\s]", " ", t).split()
+
+
+def _extra_version_words(cand_title, want_title):
+    """كلمات بين أقواس في عنوان النتيجة ما تخص الأغنية (مثل Pianoforte / Acoustic / Live 2019)."""
+    want = set(_norm(want_title))
+    extra = 0
+    for part in re.findall(r"[(\[](.*?)[)\]]", cand_title):
+        for w in _norm(part):
+            if w not in want and w not in _ALLOWED_EXTRA and not w.isdigit():
+                extra += 1
+    return extra
+
+
+def search_youtube_music(query, n=3):
+    """أغاني YouTube Music الرسمية (قسم Songs = نسخ شركات الإنتاج، قنوات Topic). العناوين فقط."""
+    from urllib.parse import quote_plus
+    r = run([*ytdlp_cmd(), "--flat-playlist", "-J", "--no-warnings", "--encoding", "utf-8", "--playlist-items", f"1-{n}",
+             f"https://music.youtube.com/search?q={quote_plus(query)}#songs"])
+    if r.returncode != 0:
+        return []
+    try:
+        entries = json.loads(r.stdout).get("entries") or []
+    except ValueError:
+        return []
+    return [{"id": e["id"], "title": e.get("title") or "", "channel": "YouTube Music", "duration": None,
+             "url": f"https://www.youtube.com/watch?v={e['id']}", "ytm": i + 1}
+            for i, e in enumerate(entries) if e.get("id")]
+
+
+def search_youtube(query, n=10, music=True):
+    """نتائج بحث يوتيوب + YouTube Music (بدون تنزيل): [{id, title, channel, duration, url, ytm?}]."""
+    check_tools(need_download=True)
+    r = run([*ytdlp_cmd(), "--flat-playlist", "-J", "--no-warnings", "--encoding", "utf-8", f"ytsearch{n}:{query}"])
+    if r.returncode != 0:
+        raise translate_ytdlp_error(r.stderr)
+    try:
+        entries = json.loads(r.stdout).get("entries") or []
+    except ValueError:
+        entries = []
+    out = search_youtube_music(query) if music else []
+    seen = {c["id"] for c in out}
+    for e in entries:
+        vid = e.get("id")
+        if not vid or vid in seen:
+            continue
+        out.append({"id": vid, "title": e.get("title") or "", "channel": e.get("channel") or e.get("uploader") or "",
+                    "duration": e.get("duration"), "url": e.get("url") or f"https://www.youtube.com/watch?v={vid}"})
+    return out
+
+
+def score_candidate(c, title, artist="", duration=None):
+    """نقاط لكل نتيجة: النسخة الرسمية (قنوات Topic) أولًا، ونستبعد الحي والريمكس والمسرّع وغيرها."""
+    ct, ch = " ".join(_norm(c["title"])), " ".join(_norm(c["channel"]))
+    want_t, want_a = _norm(title), _norm(artist)
+    score = 0.0
+    if c["channel"].endswith(" - Topic"):
+        score += 50
+    if c.get("ytm"):  # من قسم الأغاني الرسمية في YouTube Music (الأول أقوى)
+        score += 42 - 6 * (c["ytm"] - 1)
+    if want_a and all(w in ch for w in want_a[:2]):
+        score += 15
+    if "official audio" in ct:
+        score += 12
+    elif "official" in ct:
+        score += 3
+    for w in _NEG_WORDS:
+        if w in ct and w not in " ".join(want_t):
+            score -= 30
+    if "lyrics" in ct or "كلمات" in ct:
+        score -= 6
+    if "video" in ct or "clip" in ct or "كليب" in ct:
+        score -= 4
+    if want_t:
+        score += 20 * sum(1 for w in want_t if w in ct) / len(want_t)
+    score -= min(36, 12 * _extra_version_words(c["title"], title))
+    if duration and c.get("duration"):
+        diff = abs(float(c["duration"]) - float(duration))
+        score += max(0.0, 20 - diff) - (25 if diff > 30 else 0)
+    return score
+
+
+def rank_candidates(cands, title, artist="", duration=None):
+    return sorted(cands, key=lambda c: score_candidate(c, title, artist, duration), reverse=True)
+
+
 def download(url, dest, cb, token=None, match_filter=None):
     """ينزّل أعلى جودة صوت بالصيغة الأصلية (بدون تحويل) مع الغلاف والبيانات. يرجع (الملف، الغلاف|None)."""
     cmd = [
@@ -413,7 +535,7 @@ def download(url, dest, cb, token=None, match_filter=None):
         "--embed-metadata", "--write-thumbnail", "--convert-thumbnails", "jpg",
         "--newline", "--progress-template", "download:%(progress._percent_str)s",
         "-o", str(Path(dest) / "%(title).120B.%(ext)s"),
-        "--print", "after_move:filepath", "--no-simulate", "--no-warnings",
+        "--print", "after_move:MSGA\t%(channel)s\t%(duration)s\t%(filepath)s", "--no-simulate", "--no-warnings",
     ]
     searching = str(url).startswith("ytsearch")
     if searching:  # أغاني سبوتيفاي: نأخذ أول نتيجة تنطبق عليها الشروط
@@ -422,6 +544,7 @@ def download(url, dest, cb, token=None, match_filter=None):
             cmd += ["--match-filter", match_filter]
     cmd.append(url)
     filepath = None
+    info_out = download.last = {}
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
         p = popen(cmd, token, stdout=subprocess.PIPE, stderr=err)
         for line in p.stdout:
@@ -429,8 +552,11 @@ def download(url, dest, cb, token=None, match_filter=None):
             m = re.match(r"download:\s*([\d.]+)%", line)
             if m:
                 cb(float(m.group(1)) / 100)
-            elif line and not line.startswith("download:"):
-                filepath = line
+            elif line.startswith("MSGA\t"):
+                parts = line.split("\t", 3)
+                if len(parts) == 4:
+                    info_out.update(channel=parts[1], duration=parts[2])
+                    filepath = parts[3]
         p.wait()
         p.stdout.close()
         err.seek(0)
@@ -607,29 +733,57 @@ def process_item(source, opts, cb=lambda stage, frac: None):
         tmp = Path(tmpd)
         cover = None
         base = 0.0
+        match = None
         if remote:
             cb("st_download", 0.0)
-            mf = None
-            if opts.get("duration_ms"):  # نفضّل نتيجة بنفس مدة أغنية سبوتيفاي (±20 ثانية): نتجنب النسخ الحية والمقاطع
-                sec = int(opts["duration_ms"]) // 1000
-                mf = f"duration >= {max(1, sec - 20)} & duration <= {sec + 20}"
+            match = None
+            dl_url = source
+            if str(source).startswith("ytsearch"):
+                # أغنية من سبوتيفاي أو اسم بدون رابط: نرتّب النتائج ونأخذ النسخة الرسمية
+                meta = opts.get("meta") or {}
+                query = str(source).split(":", 1)[1]
+                cands = opts.get("candidates")
+                if not cands:
+                    dur = (int(opts["duration_ms"]) / 1000) if opts.get("duration_ms") else None
+                    cands = rank_candidates(search_youtube(query), meta.get("title") or query, meta.get("artist", ""), dur)
+                pick = int(opts.get("pick", 0))
+                if pick >= len(cands):
+                    raise EnhanceError("err_nomatch")
+                match = dict(cands[pick], pick=pick, count=len(cands))
+                opts["candidates"] = cands
+                dl_url = match["url"]
 
-            def fetch(filt):
-                return download(source, tmp, sub(cb, "st_download", 0.0, 0.3), token, filt)
+            def fetch():
+                nonlocal dl_url, match
+                for attempt in range(3):
+                    got = download(dl_url, tmp, sub(cb, "st_download", 0.0, 0.3), token)
+                    last = getattr(download, "last", None)
+                    info_dl = last if isinstance(last, dict) else {}
+                    if match is not None:
+                        match.update(channel=info_dl.get("channel") or match.get("channel", ""))
+                        want = opts.get("duration_ms")
+                        try:
+                            real = float(info_dl.get("duration") or 0)
+                        except ValueError:
+                            real = 0
+                        nxt = match["pick"] + 1
+                        # مدة مختلفة كثير عن سبوتيفاي: غالبًا نسخة غلط، نجرّب المرشح اللي بعده
+                        if want and real and abs(real - int(want) / 1000) > 15 and nxt < len(opts["candidates"]) and attempt < 2:
+                            for f in Path(tmp).iterdir():
+                                f.unlink()
+                            match = dict(opts["candidates"][nxt], pick=nxt, count=len(opts["candidates"]))
+                            dl_url = match["url"]
+                            continue
+                    return got
+                return got
 
             try:
-                try:
-                    src, cover = fetch(mf)
-                except EnhanceError as e:
-                    if e.key == "err_nomatch" and mf:  # ما فيه نتيجة بنفس المدة: نقبل أول نتيجة
-                        src, cover = fetch(None)
-                    else:
-                        raise
+                src, cover = fetch()
             except EnhanceError as e:
                 # فشل التنزيل غالبًا سببه تغيير في الموقع: نحدّث yt-dlp مرة ونعيد المحاولة
                 if e.key in ENGINE_RETRY and _engine_updater and _engine_updater():
                     cb("st_engine", 0.0)
-                    src, cover = fetch(mf)
+                    src, cover = fetch()
                 else:
                     raise
             base = 0.3
@@ -653,7 +807,12 @@ def process_item(source, opts, cb=lambda stage, frac: None):
         quality, (reason_key, reason_params) = classify(info, an["hf_rel"])
         auto = preset_opt == "auto"
         preset = AUTO_MAP[quality] if auto else preset_opt
-        chain = ",".join(PRESETS[preset] + extra)
+        trim = []
+        if opts.get("trim_silence") and dur and dur < 20 * 60:
+            # صمت حقيقي فقط (أقل من -60dB) ونترك 0.3 ثانية: ما يقص المقدمات الهادئة
+            one = "silenceremove=start_periods=1:start_threshold=-60dB:start_silence=0.3"
+            trim = [one, "areverse", one, "areverse"]
+        chain = ",".join(trim + PRESETS[preset] + extra)
         ln = loudnorm_filter(lufs) if lufs else None
         cwd = None
         if "arnndn" in chain:  # موديل الذكاء الاصطناعي: نشغّل ffmpeg داخل مجلد الموديلات ونكتب المسار نسبيًا
@@ -730,7 +889,9 @@ def process_item(source, opts, cb=lambda stage, frac: None):
             "lufs_after": after.get("output_i") if ln else after.get("input_i"),
             "tp_after": after.get("output_tp") if ln else after.get("input_tp"),
             "lufs_target": lufs or None, "duration": info["duration"], "format": fmt,
+            "match": {k: match[k] for k in ("title", "channel", "url", "pick", "count")} if match else None,
         },
+        "candidates": opts.get("candidates"),
     }
 
 
@@ -899,6 +1060,66 @@ def media_duration(path):
         return probe(path)["duration"]
     except EnhanceError:
         return None
+
+
+def recycle(path):
+    """يحذف الملف لسلة المحذوفات في ويندوز (يقدر المستخدم يرجعه). باقي الأنظمة: حذف عادي."""
+    p = Path(path)
+    if IS_WIN:
+        import ctypes
+        from ctypes import wintypes
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
+                        ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_uint16), ("fAnyOperationsAborted", wintypes.BOOL),
+                        ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+        op = SHFILEOPSTRUCTW(None, 3, str(p.resolve()) + "\0", None, 0x0040 | 0x0010 | 0x0004 | 0x0400, False, None, None)
+        if ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op)) != 0 or p.exists():
+            raise OSError("recycle failed")
+    else:
+        p.unlink()
+
+
+LRCLIB = "https://lrclib.net/api"
+
+
+def _good_lyrics(d):
+    """نتجاهل الإدخالات الناقصة أو التجريبية (مثل سطر واحد «probe»)."""
+    synced = [ln for ln in (d.get("syncedLyrics") or "").splitlines() if re.sub(r"\[[^\]]*\]", "", ln).strip()]
+    plain = [ln for ln in (d.get("plainLyrics") or "").splitlines() if ln.strip()]
+    return len(synced) >= 6 or len(plain) >= 4
+
+
+def fetch_lyrics(title, artist="", duration=None):
+    """كلمات الأغنية من LRCLIB (مجاني ومفتوح، بدون مفتاح). يرجع {synced, plain} أو None."""
+    from urllib.parse import urlencode
+    from .version import VERSION
+    headers = {"User-Agent": f"MakeSoundGreatAgain/{VERSION} (https://github.com/abo5lood10/make-sound-great-again)"}
+
+    def get(url):
+        try:
+            return json.loads(http_get(url, headers, timeout=12))
+        except Exception:
+            return None
+
+    def pack(d):
+        good_synced = len([ln for ln in (d.get("syncedLyrics") or "").splitlines() if re.sub(r"\[[^\]]*\]", "", ln).strip()]) >= 6
+        return {"synced": d.get("syncedLyrics") if good_synced else None, "plain": d.get("plainLyrics")}
+    if artist and duration:
+        q = urlencode({"track_name": title, "artist_name": artist, "duration": int(round(duration))})
+        d = get(f"{LRCLIB}/get?{q}")
+        if isinstance(d, dict) and _good_lyrics(d):
+            return pack(d)
+    res = get(f"{LRCLIB}/search?{urlencode({'q': f'{artist} {title}'.strip()})}") or []
+    if not isinstance(res, list):
+        return None
+    good = [d for d in res[:15] if isinstance(d, dict) and _good_lyrics(d)
+            and not (duration and d.get("duration") and abs(d["duration"] - duration) > 8)]
+    if not good:
+        return None
+    # نفضّل المتزامنة، ثم الأقرب بالمدة
+    good.sort(key=lambda d: (not d.get("syncedLyrics"), abs((d.get("duration") or 0) - (duration or 0)) if duration else 0))
+    return pack(good[0])
 
 
 def spectrogram(src, out_png):

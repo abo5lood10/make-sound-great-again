@@ -468,42 +468,57 @@ class SpotifyAndSources(unittest.TestCase):
         self.assertFalse(server.looks_like_playlist("https://www.youtube.com/watch?v=abc&list=PL123"))
         self.assertFalse(server.looks_like_playlist("https://www.youtube.com/watch?v=abc"))
 
+    def test_ranking_prefers_official_versions(self):
+        cands = [
+            {"id": "1", "title": "Song (Live at Wembley)", "channel": "Art", "duration": 205, "url": "u1"},
+            {"id": "2", "title": "Art - Song (Official Video)", "channel": "ArtVEVO", "duration": 260, "url": "u2"},
+            {"id": "3", "title": "Song", "channel": "Art - Topic", "duration": 201, "url": "u3"},
+            {"id": "4", "title": "Song (Pianoforte)", "channel": "Art", "duration": 199, "url": "u4"},
+            {"id": "5", "title": "Song sped up", "channel": "fan", "duration": 160, "url": "u5"},
+            {"id": "6", "title": "Song", "channel": "YouTube Music", "duration": None, "url": "u6", "ytm": 1},
+        ]
+        ranked = [c["id"] for c in core.rank_candidates(cands, "Song", "Art", 200)]
+        self.assertEqual(set(ranked[:2]), {"3", "6"})
+        self.assertGreater(ranked.index("1"), 2)
+        self.assertGreaterEqual(ranked.index("4"), 2)
+        self.assertEqual(ranked[-1], "5")
+        # العربي: أ / ا نفس الشي
+        self.assertEqual(core._norm("الأماكن"), core._norm("الاماكن"))
+
     @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
-    def test_search_source_applies_duration_filter_metadata_and_name(self):
+    def test_search_downloads_best_candidate_and_falls_back_on_wrong_length(self):
+        cands = [{"id": "a", "title": "Song", "channel": "Art - Topic", "duration": 200, "url": "https://y/a"},
+                 {"id": "b", "title": "Song", "channel": "Art", "duration": 201, "url": "https://y/b"}]
         with tempfile.TemporaryDirectory() as d:
             make_tone(Path(d) / "x.mp3")
-            seen = {}
+            urls = []
 
             def fake_download(url, dest, cb, token=None, match_filter=None):
-                seen.update(url=url, filter=match_filter)
-                return Path(d) / "x.mp3", None
+                urls.append(url)
+                shutil.copy(Path(d) / "x.mp3", Path(dest) / f"x{len(urls)}.mp3")
+                core.download.last = {"channel": "Art - Topic" if url.endswith("a") else "Art",
+                                      "duration": "320" if url.endswith("a") else "201"}
+                return Path(dest) / f"x{len(urls)}.mp3", None
 
-            with mock.patch.object(core, "download", side_effect=fake_download):
-                res = core.process_item("ytsearch5:Art - Song audio", {
+            with mock.patch.object(core, "search_youtube", return_value=cands), \
+                    mock.patch.object(core, "download", side_effect=fake_download):
+                res = core.process_item("ytsearch10:Art - Song", {
                     "out_dir": d, "format": "flac", "name": "Art - Song", "duration_ms": 200000,
                     "meta": {"title": "Song", "artist": "Art", "album": "Alb"}})
-            self.assertEqual(seen["filter"], "duration >= 180 & duration <= 220")
-            self.assertTrue(Path(res["output"]).name.startswith("Art - Song_enhanced"))
-            tags = core.read_tags(res["output"])
-            self.assertEqual((tags["title"], tags["artist"], tags["album"]), ("Song", "Art", "Alb"))
+                self.assertEqual(urls, ["https://y/a", "https://y/b"])   # المدة غلط: جرّب اللي بعده
+                self.assertEqual(res["report"]["match"]["pick"], 1)
+                self.assertEqual(res["report"]["match"]["channel"], "Art")
+                self.assertEqual(len(res["candidates"]), 2)
+                self.assertTrue(Path(res["output"]).name.startswith("Art - Song_enhanced"))
+                tags = core.read_tags(res["output"])
+                self.assertEqual((tags["title"], tags["artist"], tags["album"]), ("Song", "Art", "Alb"))
+                with self.assertRaises(core.EnhanceError) as ctx:   # «مو هذي الأغنية» بعد آخر مرشح
+                    core.process_item("ytsearch10:Art - Song", {"out_dir": d, "candidates": cands, "pick": 2})
+                self.assertEqual(ctx.exception.key, "err_nomatch")
 
-    @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
-    def test_no_filter_match_falls_back_to_first_result(self):
-        with tempfile.TemporaryDirectory() as d:
-            make_tone(Path(d) / "x.mp3")
-            calls = []
-
-            def fake_download(url, dest, cb, token=None, match_filter=None):
-                calls.append(match_filter)
-                if match_filter:
-                    raise core.EnhanceError("err_nomatch")
-                return Path(d) / "x.mp3", None
-
-            with mock.patch.object(core, "download", side_effect=fake_download):
-                core.process_item("ytsearch5:A - B audio", {"out_dir": d, "duration_ms": 100000})
-        self.assertEqual(len(calls), 2)
-        self.assertIsNotNone(calls[0])
-        self.assertIsNone(calls[1])
+    def test_trim_silence_and_log(self):
+        core.log("hello\nworld")
+        self.assertTrue(list(core.LOG)[-1].endswith("world"))
 
 
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
@@ -674,6 +689,137 @@ class UiFontServing(unittest.TestCase):
             self.assertNotIn(b"/uifont/", self.get("/")[1])
         finally:
             server.STATE.ui_font = old
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+class V15Features(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.out = Path(tempfile.mkdtemp())
+        core.save_config({**core.load_config(), "out": str(cls.out), "notify": False, "trim_silence": True})
+        server.STATE.items.clear()
+        cls.httpd = server.make_server("window")
+        cls.port = server.STATE.port
+        threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def call(self, method, path, body=None):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=60)
+        c.request(method, path, body=json.dumps(body).encode() if isinstance(body, dict) else body)
+        r = c.getresponse()
+        raw = r.read()
+        c.close()
+        return r.status, raw
+
+    def test_trim_silence_removes_leading_and_trailing_silence(self):
+        d = Path(tempfile.mkdtemp())
+        src = d / "padded.wav"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=3",
+                        "-f", "lavfi", "-i", "sine=f=440:d=4:r=48000", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=3",
+                        "-filter_complex", "[1]aformat=channel_layouts=stereo[s];[0][s][2]concat=n=3:v=0:a=1", str(src)], check=True)
+        trimmed = core.process_item(str(src), {"out_dir": str(d / "o"), "trim_silence": True})
+        kept = core.process_item(str(src), {"out_dir": str(d / "o2"), "trim_silence": False})
+        self.assertLess(core.media_duration(trimmed["output"]), 5.5)
+        self.assertGreater(core.media_duration(kept["output"]), 9.5)
+
+    def test_player_queue_survives_restart(self):
+        f = self.out / "keep_me.mp3"
+        make_tone(f)
+        self.call("POST", "/api/player/paths", {"paths": [str(f)]})
+        self.call("POST", "/api/player/save", {"idx": 0, "pos": 2.5})
+        server.STATE.queue.clear()
+        server.STATE.tracks.clear()
+        server.player_restore()
+        st, raw = self.call("GET", "/api/player/tracks")
+        data = json.loads(raw)
+        self.assertEqual([t["name"] for t in data["tracks"]], ["keep_me"])
+        self.assertEqual(data["resume"], {"idx": 0, "pos": 2.5})
+
+    def test_library_scan_play_and_delete(self):
+        for n in ("lib_a", "lib_b"):
+            make_tone(self.out / f"{n}_enhanced.mp3")
+        make_tone(self.out / "lib_a_original.mp3")   # نسخ المقارنة ما تظهر
+        for _ in range(60):
+            data = json.loads(self.call("GET", "/api/library")[1])
+            names = {f["name"] for f in data["files"]}
+            if not data["scanning"] and {"lib_a_enhanced", "lib_b_enhanced"} <= names:
+                break
+            time.sleep(0.5)
+        self.assertIn("lib_a_enhanced", names)
+        self.assertNotIn("lib_a_original", names)
+        path = str(self.out / "lib_b_enhanced.mp3")
+        st, raw = self.call("POST", "/api/library/play", {"paths": [path]})
+        self.assertIsNotNone(json.loads(raw)["index"])
+        st, raw = self.call("POST", "/api/library/delete", {"path": path})
+        self.assertTrue(json.loads(raw)["ok"])
+        self.assertFalse(Path(path).exists())
+        st, raw = self.call("POST", "/api/library/delete", {"path": "/etc/passwd"})   # خارج مجلد الحفظ: ممنوع
+        self.assertFalse(json.loads(raw)["ok"])
+
+    def test_lyrics_endpoint_caches(self):
+        f = self.out / "Artist - Lyric Song_enhanced.mp3"
+        make_tone(f)
+        tid = json.loads(self.call("POST", "/api/player/paths", {"paths": [str(f)]})[1])["tracks"][0]["id"]
+        lrc = "[00:01.00]first line\n[00:02.50]second line"
+        with mock.patch.object(core, "fetch_lyrics", return_value={"synced": lrc, "plain": None}) as fl:
+            r1 = json.loads(self.call("GET", f"/api/player/lyrics?id={tid}")[1])
+            r2 = json.loads(self.call("GET", f"/api/player/lyrics?id={tid}")[1])
+        self.assertEqual(r1["synced"], lrc)
+        self.assertEqual(r2["synced"], lrc)
+        self.assertEqual(fl.call_count, 1)                      # المرة الثانية من الكاش
+        self.assertEqual(fl.call_args[0][:2], ("Lyric Song", "Artist"))
+
+    def test_next_match_replaces_wrong_version(self):
+        cands = [{"id": "a", "title": "S", "channel": "X", "duration": 4, "url": "https://y/a"},
+                 {"id": "b", "title": "S", "channel": "X - Topic", "duration": 4, "url": "https://y/b"}]
+        tone = Path(tempfile.mkdtemp()) / "t.mp3"
+        make_tone(tone)
+
+        def fake_download(url, dest, cb, token=None, match_filter=None):
+            out = Path(dest) / f"dl_{url[-1]}.mp3"
+            shutil.copy(tone, out)
+            core.download.last = {"channel": "X" if url.endswith("a") else "X - Topic", "duration": "4"}
+            return out, None
+
+        with mock.patch.object(core, "search_youtube", return_value=cands), \
+                mock.patch.object(core, "download", side_effect=fake_download):
+            self.call("POST", "/api/submit", {"queries": ["X - S"]})
+            first = None
+            for _ in range(80):
+                first = next((i for i in json.loads(self.call("GET", "/api/state")[1])["items"]
+                              if i["label"] == "X - S" and i["status"] in ("done", "error")), None)
+                if first:
+                    break
+                time.sleep(0.5)
+            self.assertEqual(first["status"], "done", first)
+            self.assertTrue(first["can_next"])
+            self.assertEqual(first["result"]["match"]["pick"], 0)
+            self.assertEqual(first["result"]["match"]["channel"], "X - Topic")   # الرسمية أولًا
+            old_file = self.out / first["result"]["output_name"]
+            self.assertEqual(self.call("POST", "/api/next_match", {"id": first["id"]})[0], 200)
+            second = None
+            for _ in range(80):
+                items = json.loads(self.call("GET", "/api/state")[1])["items"]
+                second = next((i for i in items if i["label"] == "X - S" and i["id"] != first["id"]
+                               and i["status"] == "done"), None)
+                if second and not any(i["id"] == first["id"] for i in items):
+                    break
+                time.sleep(0.5)
+        self.assertEqual(second["result"]["match"]["channel"], "X")
+        self.assertFalse(second["can_next"])
+        self.assertFalse(old_file.exists())                    # النسخة الغلط انحذفت
+
+    def test_log_endpoint(self):
+        core.log("something happened")
+        st, raw = self.call("GET", "/api/log")
+        text = raw.decode()
+        self.assertEqual(st, 200)
+        self.assertIn(updater.VERSION, text)
+        self.assertIn("something happened", text)
 
 
 class Startup(unittest.TestCase):

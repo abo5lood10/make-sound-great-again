@@ -65,6 +65,7 @@ class State:
         self.queue = []          # ترتيب المشغّل (قائمة معرّفات)
         self.tracks = {}         # id -> track dict
         self.tc_locks = {}       # قفل لكل ملف أثناء التحويل المؤقت
+        self.player_resume = {"idx": -1, "pos": 0}
 
     def get_executor(self, jobs):
         if self.executor is None or jobs != self.executor_jobs:
@@ -97,6 +98,9 @@ STATE = State()
 def public(it):
     d = {k: v for k, v in it.items() if not k.startswith("_")}
     d["can_rerun"] = bool(it["_paths"].get("o") and Path(it["_paths"]["o"]).exists())
+    o = it.get("_opts") or {}
+    d["can_next"] = bool(it["status"] == "done" and str(it.get("_source") or "").startswith("ytsearch")
+                         and o.get("candidates") and int(o.get("pick", 0)) + 1 < len(o["candidates"]))
     d["can_tags"] = bool(it["_paths"].get("e") and Path(it["_paths"]["e"]).exists())
     d["can_retry"] = bool(it["status"] in ("error", "cancelled") and it["_source"]
                           and (it["kind"] != "file" or Path(it["_source"]).is_file()))
@@ -232,7 +236,13 @@ def run_item(it):
                  original_name=Path(res["original"]).name if res["original"] else None,
                  original_path=res["original"])
         it["_paths"] = {"e": res["output"], "o": res["original"]}
+        if res.get("candidates"):
+            it["_opts"]["candidates"] = res["candidates"]
+            it["_opts"]["pick"] = (r.get("match") or {}).get("pick", 0)
         it.update(status="done", stage_key="st_done", pct=100, result=r)
+        core.log(f"done: {it['label']} -> {Path(res['output']).name}"
+                 + (f" (from {r['match']['channel']}: {r['match']['title']})" if r.get("match") else ""))
+        replace_old(it)
         STATE.finished_batch += 1
         if it["_cleanup"]:
             try:
@@ -246,10 +256,30 @@ def run_item(it):
             it.update(status="cancelled", error=None)
         else:
             it.update(status="error", error=error_dict(e))
+            core.log(f"error: {it['label']}: {e.text('en')}")
     except Exception as e:  # خطأ غير متوقع: نعرضه بدل ما تنهار الواجهة
+        import traceback
         it.update(status="error", error=error_dict(e))
+        core.log(f"unexpected error: {it['label']}\n{traceback.format_exc()}")
     finally:
         maybe_notify()
+
+
+def replace_old(it):
+    """«مو هذي الأغنية»: لما تنجح النسخة الجديدة، النسخة الغلط تروح لسلة المحذوفات وتختفي من القائمة."""
+    old = STATE.find(it.get("_replaces") or "")
+    if not old:
+        return
+    p = old["_paths"].get("e")
+    try:
+        if p and Path(p).is_file() and Path(p) != Path(it["_paths"]["e"]):
+            core.recycle(p)
+    except OSError as e:
+        core.log(f"couldn't remove the wrong version {p}: {e}")
+    with STATE.lock:
+        if old in STATE.items:
+            STATE.items.remove(old)
+    save_history()
 
 
 def looks_like_playlist(url):
@@ -390,7 +420,7 @@ def player_state():
     return {"tracks": [public_track(STATE.tracks[i]) for i in STATE.queue if i in STATE.tracks]}
 
 
-def player_add(paths, append=False, only_new=True):
+def player_add(paths, append=False, only_new=True, persist=True):
     """يسجّل ملفات (أو مجلدات) في قائمة المشغّل. يرجع معرّف آخر ملف أُضيف."""
     import hashlib
     if not append:
@@ -409,7 +439,89 @@ def player_add(paths, append=False, only_new=True):
                 continue
             STATE.queue.append(tid)
         last = tid
+    if persist:
+        player_persist()
     return last
+
+
+# ---------- حفظ قائمة المشغّل (يكمل من نفس المكان بعد إعادة التشغيل) ----------
+def player_file():
+    return core.config_dir() / "player.json"
+
+
+def player_persist():
+    data = {"paths": [STATE.tracks[i]["path"] for i in STATE.queue if i in STATE.tracks], **(STATE.player_resume or {})}
+    try:
+        player_file().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def player_restore():
+    try:
+        data = json.loads(player_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    paths = [p for p in data.get("paths", []) if Path(p).is_file()]
+    if paths:
+        player_add(paths, append=False, persist=False)
+    idx = int(data.get("idx", -1))
+    STATE.player_resume = {"idx": idx if 0 <= idx < len(STATE.queue) else -1, "pos": float(data.get("pos", 0))}
+
+
+# ---------- المكتبة: كل الأغاني في مجلد الحفظ ----------
+LIB = {"files": {}, "scanning": False, "loaded": False, "lock": threading.Lock()}
+
+
+def library_cache_file():
+    return core.config_dir() / "library.json"
+
+
+def _scan_library():
+    LIB["scanning"] = True
+    try:
+        if not LIB["loaded"]:
+            try:
+                LIB["files"] = json.loads(library_cache_file().read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                LIB["files"] = {}
+            LIB["loaded"] = True
+        out = Path(core.load_config()["out"])
+        present = {}
+        for f in core.collect_media([str(out)], limit=20000):
+            if f.stem.endswith("_original"):
+                continue  # نسخ المقارنة الأصلية ما تظهر في المكتبة
+            st = f.stat()
+            key = str(f)
+            old = LIB["files"].get(key)
+            if old and old.get("mtime") == int(st.st_mtime) and old.get("size") == st.st_size:
+                present[key] = old
+                continue
+            try:
+                tags = core.read_tags(f)
+            except core.EnhanceError:
+                tags = {"title": "", "artist": "", "album": ""}
+            present[key] = {"path": key, "name": f.stem, "ext": f.suffix.lower().lstrip("."), "title": tags.get("title", ""),
+                            "artist": tags.get("artist", ""), "album": tags.get("album", ""),
+                            "duration": core.media_duration(f), "mtime": int(st.st_mtime), "size": st.st_size}
+            LIB["files"] = {**LIB["files"], key: present[key]}
+        LIB["files"] = present
+        try:
+            library_cache_file().write_text(json.dumps(present, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+    finally:
+        LIB["last"] = time.time()
+        LIB["scanning"] = False
+
+
+def library_state():
+    """يرجع الموجود فورًا، ويحدّث بالخلفية لو آخر قراءة أقدم من 10 ثواني (ما يعيد القراءة مع كل طلب)."""
+    started = False
+    if not LIB["scanning"] and time.time() - LIB.get("last", 0) > 10:
+        LIB["scanning"] = started = True
+        threading.Thread(target=_scan_library, daemon=True).start()
+    return {"files": list(LIB["files"].values()), "scanning": LIB["scanning"] or started}
 
 
 class QuietServer(ThreadingHTTPServer):
@@ -418,6 +530,8 @@ class QuietServer(ThreadingHTTPServer):
     def handle_error(self, request, client_address):
         if isinstance(sys.exc_info()[1], (ConnectionError, BrokenPipeError, TimeoutError)):
             return
+        import traceback
+        core.log("server error:\n" + traceback.format_exc())
         super().handle_error(request, client_address)
 
 
@@ -486,7 +600,13 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/play/"):
             self._play(unquote(path[6:]), parse_qs(url.query))
         elif path == "/api/player/tracks":
-            self._json(player_state())
+            self._json(dict(player_state(), resume=STATE.player_resume))
+        elif path == "/api/player/lyrics":
+            self._player_lyrics(parse_qs(url.query))
+        elif path == "/api/library":
+            self._json(library_state())
+        elif path == "/api/log":
+            self._log()
         elif path == "/api/player/meta":
             self._player_meta(parse_qs(url.query))
         elif path == "/api/player/cover":
@@ -588,7 +708,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/pick": self._pick, "/api/submit_paths": self._submit_paths, "/api/tags": self._set_tags,
             "/api/player/open": self._player_open, "/api/player/paths": self._player_paths,
             "/api/player/add_item": self._player_add_item, "/api/player/clear": self._player_clear,
-            "/api/window/mode": self._window_mode,
+            "/api/window/mode": self._window_mode, "/api/next_match": self._next_match,
+            "/api/player/save": self._player_save, "/api/library/delete": self._library_delete,
+            "/api/library/play": self._library_play,
         }
         fn = routes.get(path)
         if fn:
@@ -599,7 +721,8 @@ class Handler(BaseHTTPRequestHandler):
     @staticmethod
     def _opts_static(cfg):
         return {"preset": cfg["preset"], "format": cfg["format"], "out_dir": cfg["out"], "light": cfg["light"],
-                "bass": cfg["bass"], "treble": cfg["treble"], "lufs": cfg["lufs"]}, core.auto_jobs()
+                "bass": cfg["bass"], "treble": cfg["treble"], "lufs": cfg["lufs"],
+                "trim_silence": cfg["trim_silence"]}, core.auto_jobs()
 
     def _opts(self, d):
         cfg = core.load_config()
@@ -619,7 +742,8 @@ class Handler(BaseHTTPRequestHandler):
         if lufs not in core.LUFS_CHOICES:
             return None
         return {"preset": preset, "format": fmt, "out_dir": cfg["out"], "light": cfg["light"],
-                "bass": bass, "treble": treble, "lufs": lufs, "keep_original": cfg["keep_original"]}, core.auto_jobs()
+                "bass": bass, "treble": treble, "lufs": lufs, "keep_original": cfg["keep_original"],
+                "trim_silence": cfg["trim_silence"]}, core.auto_jobs()
 
     def _submit(self, d):
         parsed = self._opts(d)
@@ -644,7 +768,28 @@ class Handler(BaseHTTPRequestHandler):
                     it = STATE.new_item(u, "url", source=u, opts=dict(opts), req=req, src_url=u)
                     submit_item(it, jobs)
             added += 1
+        for q in d.get("queries", []):
+            q = str(q).strip()[:200]
+            if not q:
+                continue
+            artist, _, title = q.partition(" - ") if " - " in q else ("", "", q)
+            o = dict(opts, name=core.safe_stem(q), meta={"title": title.strip(), "artist": artist.strip()})
+            source = f"ytsearch10:{q}"
+            submit_item(STATE.new_item(q, "url", source=source, opts=o, req=request_key(o), src_url=source), jobs)
+            added += 1
         self._json({"added": added} if added else {"error": "nothing"}, 200 if added else 400)
+
+    def _next_match(self, d):
+        """«مو هذي الأغنية»: نجرّب المرشح اللي بعده من نفس نتائج البحث (بدون بحث جديد)."""
+        it = STATE.find(d.get("id", ""))
+        o = dict((it or {}).get("_opts") or {})
+        if not it or not o.get("candidates") or int(o.get("pick", 0)) + 1 >= len(o["candidates"]):
+            return self._json({"ok": False}, 400)
+        o["pick"] = int(o.get("pick", 0)) + 1
+        new = STATE.new_item(it["label"], "url", source=it["_source"], opts=o, req=it["_req"], src_url=it["_src"])
+        new["_replaces"] = it["id"]
+        submit_item(new, core.auto_jobs())
+        self._json({"ok": True})
 
     def _cached(self, url, req):
         with STATE.lock:
@@ -770,6 +915,90 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": True})
         threading.Thread(target=restart_app, daemon=True).start()
 
+    def _player_save(self, d):
+        try:
+            STATE.player_resume = {"idx": int(d.get("idx", -1)), "pos": float(d.get("pos", 0))}
+        except (TypeError, ValueError):
+            pass
+        player_persist()
+        self._json({"ok": True})
+
+    def _player_lyrics(self, q):
+        t = STATE.tracks.get((q.get("id") or [""])[0])
+        if not t:
+            return self._json({"error": "not_found"}, 404)
+        if not t.get("meta_loaded"):
+            self._player_meta({"id": [t["id"]]}, reply=False)
+        title, artist = t.get("title"), t.get("artist")
+        if not title:  # من اسم الملف: "الفنان - العنوان_enhanced"
+            name = re.sub(r"(_enhanced|_original)?( \(\d+\))?$", "", t["name"])
+            artist, _, title = name.partition(" - ") if " - " in name else ("", "", name)
+        key = hashlib.sha1(f"{artist}|{title}|{round(t.get('duration') or 0)}".encode()).hexdigest()[:16]
+        cache = core.config_dir() / "lyrics"
+        cache.mkdir(exist_ok=True)
+        f = cache / f"{key}.json"
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if data.get("none") and time.time() - data.get("t", 0) > 7 * 86400:
+                raise ValueError("retry")
+        except (OSError, ValueError):
+            got = core.fetch_lyrics(title.strip(), (artist or "").strip(), t.get("duration"))
+            data = got or {"none": True, "t": time.time()}
+            try:
+                f.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass
+        self._json({"synced": data.get("synced"), "plain": data.get("plain"), "none": bool(data.get("none"))})
+
+    def _library_delete(self, d):
+        p = Path(str(d.get("path", "")))
+        out = Path(core.load_config()["out"]).resolve()
+        try:
+            ok = p.is_file() and out in p.resolve().parents
+            if ok:
+                core.recycle(p)
+                core.log(f"library: moved to recycle bin: {p.name}")
+        except OSError as e:
+            core.log(f"library delete failed: {e}")
+            ok = False
+        LIB["files"].pop(str(p), None)
+        LIB["last"] = 0
+        self._json({"ok": ok})
+
+    def _library_play(self, d):
+        paths = [str(x) for x in d.get("paths", [])]
+        before = list(STATE.queue)
+        player_add(paths, append=True)
+        state = player_state()
+        first = None
+        if paths:
+            import hashlib as _h
+            fid = _h.sha1(str(Path(paths[0]).resolve()).encode("utf-8")).hexdigest()[:10]
+            first = STATE.queue.index(fid) if fid in STATE.queue else (len(before) if len(STATE.queue) > len(before) else None)
+        state["index"] = first
+        self._json(state)
+
+    def _log(self):
+        cfg = core.load_config()
+        head = [f"{APP_NAME} {VERSION} | {sys.platform} | Python {sys.version.split()[0]} | frozen={updater.FROZEN}",
+                f"tools missing: {core.missing_tools(need_download=True)} | jobs: {core.auto_jobs()}",
+                "config: " + json.dumps({k: v for k, v in cfg.items() if k not in ("out", "watch")}, ensure_ascii=False),
+                "-" * 60]
+        lines = list(core.LOG)
+        log_file = core.config_dir() / "app.log"
+        if log_file.is_file():
+            try:
+                lines += ["-" * 20 + " app.log " + "-" * 20] + log_file.read_text(encoding="utf-8", errors="replace").splitlines()[-150:]
+            except OSError:
+                pass
+        body = "\n".join(head + lines).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _window_mode(self, d):
         mode = d.get("mode") if d.get("mode") in ("full", "mini", "mini_tall") else "full"
         corner = d.get("corner") if d.get("corner") in ("top", "bottom") else core.load_config()["mini_corner"]
@@ -806,12 +1035,14 @@ class Handler(BaseHTTPRequestHandler):
     def _player_clear(self, _d):
         STATE.queue.clear()
         STATE.tracks.clear()
+        STATE.player_resume = {"idx": -1, "pos": 0}
+        player_persist()
         self._json(player_state())
 
-    def _player_meta(self, q):
+    def _player_meta(self, q, reply=True):
         t = STATE.tracks.get((q.get("id") or [""])[0])
         if not t:
-            return self._json({"error": "not_found"}, 404)
+            return self._json({"error": "not_found"}, 404) if reply else None
         if not t.get("meta_loaded"):
             try:
                 core.set_light(core.load_config()["light"])
@@ -821,7 +1052,8 @@ class Handler(BaseHTTPRequestHandler):
             except core.EnhanceError:
                 pass
             t["meta_loaded"] = True
-        self._json(public_track(t))
+        if reply:
+            self._json(public_track(t))
 
     def _player_cover(self, q):
         t = STATE.tracks.get((q.get("id") or [""])[0])
@@ -991,6 +1223,8 @@ def make_server(mode="browser"):
                     STATE.ui_font = {}
             if not STATE.items:
                 load_history()
+            if not STATE.queue:
+                player_restore()
             prune_uploads()
             threading.Thread(target=watcher_loop, daemon=True).start()
             return httpd

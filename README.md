@@ -26,6 +26,11 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 - **Enhanced songs go to the player** automatically (and start playing if nothing is playing); finished results collapse to one line instead of piling up.
 - **iOS-style menus** for preset / format / loudness, with an explanation of each option on hover. The number of songs processed at once is chosen automatically for your computer.
 - **One-click update**: *Settings → Update the app* (or the banner) checks, downloads, verifies, closes and reopens the app by itself.
+- **Smarter song matching** for Spotify links and typed song names (just type `Artist - Title`, no link needed): results from YouTube Music's official songs and "- Topic" channels win; live, cover, remix, sped-up/slowed, karaoke and other versions are pushed down; if the downloaded length doesn't match, the next candidate is tried. Each result shows which channel it came from, with a **"Not this song"** button that swaps in the next candidate.
+- **The player remembers** its queue, song and position after a restart; **keyboard media keys** work even when the app isn't in front (Windows); an **icon next to the clock** (play / pause / next / show / quit) and an option to keep playing when the window is closed.
+- **Synced lyrics** (from the free, open LRCLIB database), a **live EQ** (bass / mids / treble) and **crossfade** in the player.
+- **Library**: every song in your output folder with search, sorting, duplicate detection, play / add to queue, and delete (to the Recycle Bin).
+- **Trim silence** at the start and end (true silence only), and **Copy log** in Settings for reporting problems.
 - **Built-in player**: open files or a folder from your computer and it plays everything in order, with previous / next, seek, volume, shuffle and repeat. Plays **every format** (formats the system can't play natively are converted on the fly with ffmpeg) and **videos play their audio only**.
 - **Choose files or a whole folder** from the system dialog: songs are processed in place (your originals are never copied or moved), videos are turned into audio.
 - **Watch a folder**: new songs dropped into it are enhanced automatically (existing files are left alone).

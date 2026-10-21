@@ -4,7 +4,8 @@
 // ---------- النصوص: [عربي, English] ----------
 const T = {
   subtitle: ["حسّن جودة أي أغنية من رابط أو ملف", "Improve any song from a link or a file"],
-  url_placeholder: ["الصق رابط يوتيوب أو تيكتوك أو انستا أو سبوتيفاي… (رابط في كل سطر)", "Paste a YouTube, TikTok, Instagram or Spotify link… (one per line)"],
+  url_placeholder: ["الصق رابط (يوتيوب، تيكتوك، انستا، سبوتيفاي…) أو اكتب اسم الأغنية مثل: محمد عبده - الأماكن (سطر لكل وحدة)",
+                    "Paste a link (YouTube, TikTok, Instagram, Spotify…) or type a song name like: Artist - Title (one per line)"],
   url_hint: ["يوتيوب · تيكتوك · ساوندكلاود · انستا · سبوتيفاي (أغنية / ألبوم / قائمة). قوائم التشغيل تُكتشف تلقائيًا. سبوتيفاي: البرنامج يلقى الأغنية في يوتيوب وينزّلها (صوت سبوتيفاي نفسه محمي).",
              "YouTube · TikTok · SoundCloud · Instagram · Spotify (song / album / playlist). Playlists are detected automatically. Spotify: the app finds each song on YouTube and downloads it (Spotify's own audio is protected)."],
   paste_link: ["📋 لصق رابط من الحافظة", "📋 Paste link from clipboard"],
@@ -103,6 +104,29 @@ const T = {
   pl_formats: ["كل الصيغ مدعومة، والفيديو يُشغَّل صوته فقط", "All formats work; videos play audio only"],
   pl_preparing: ["جاري التجهيز…", "Preparing…"], pl_failed: ["تعذّر تشغيل هذا الملف", "Couldn't play this file"],
   pl_nothing: ["لا شي يُشغَّل", "Nothing playing"], play_here: ["▶ شغّل بالمشغّل", "▶ Play in the player"],
+  url_or_name: ["", ""],
+  from_src: ["المصدر: {c} · {t}", "Source: {c} · {t}"], not_this: ["مو هذي الأغنية", "Not this song"],
+  trying_next: ["أجرّب نسخة ثانية…", "Trying another version…"],
+  library: ["المكتبة", "Library"], lib_search: ["ابحث بالاسم أو الفنان…", "Search by title or artist…"],
+  lib_dups: ["المكررات فقط", "Duplicates only"], lib_play_all: ["▶ تشغيل الكل", "▶ Play all"],
+  lib_scanning: ["جاري قراءة المكتبة… {n} أغنية", "Reading the library… {n} songs"], lib_count: ["{n} أغنية", "{n} songs"],
+  lib_empty: ["ما فيه أغاني في مجلد الحفظ بعد", "No songs in the output folder yet"],
+  lib_dup_badge: ["مكررة", "Duplicate"], lib_add: ["أضف للقائمة", "Add to queue"], lib_delete: ["حذف", "Delete"],
+  lib_confirm: ["تأكيد الحذف؟ (يروح لسلة المحذوفات)", "Delete? (goes to the Recycle Bin)"],
+  s_new: ["الأحدث", "Newest"], s_title: ["الاسم", "Title"], s_artist: ["الفنان", "Artist"], s_dur: ["المدة", "Length"],
+  lyrics: ["الكلمات", "Lyrics"], lyrics_loading: ["جاري البحث عن الكلمات…", "Looking for lyrics…"],
+  lyrics_none: ["ما لقيت كلمات لهذي الأغنية", "No lyrics found for this song"],
+  lyrics_src: ["الكلمات من LRCLIB", "Lyrics from LRCLIB"],
+  eq: ["المعادل", "EQ"], eq_low: ["البيس", "Bass"], eq_mid: ["الوسط", "Mids"], eq_high: ["التريبل", "Treble"],
+  crossfade: ["انتقال ناعم (ثانية)", "Crossfade (s)"], eq_reset: ["إرجاع للصفر", "Reset"],
+  eq_note: ["يشتغل وقت التشغيل على أي أغنية، بدون ما يغيّر الملفات", "Applies live to any song without changing the files"],
+  trim_label: ["قص الصمت في البداية والنهاية", "Trim silence at start and end"],
+  trim_hint: ["الصمت الحقيقي فقط، ما يقص المقدمات الهادئة", "Only true silence; quiet intros are kept"],
+  tray_label: ["تكمل الموسيقى لما تقفل النافذة", "Keep playing when the window is closed"],
+  tray_hint: ["البرنامج يبقى في أيقونة جنب الساعة (كليك يمين عليها للإغلاق)", "The app stays in the icon next to the clock (right-click it to quit)"],
+  log_label: ["سجل البرنامج", "App log"], log_hint: ["لو صار خطأ، انسخ السجل وأرسله", "If something goes wrong, copy the log and send it"],
+  log_copy: ["نسخ السجل", "Copy log"], log_copied: ["تم النسخ ✓ (الصقه في الرسالة)", "Copied ✓ (paste it in your message)"],
+  log_manual: ["ما قدرت أنسخ تلقائيًا: حدد النص تحت وانسخه", "Couldn't copy automatically: select the text below and copy it"],
   waiting: ["بالانتظار", "Waiting"], failed: ["فشل", "Failed"], cancelled: ["أُلغيت", "Cancelled"],
   reading_playlist: ["قراءة القائمة", "Reading playlist"],
   retry: ["إعادة المحاولة", "Retry"],
@@ -261,6 +285,10 @@ function applyLang() {
   document.querySelectorAll("[data-i18n-ph]").forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
   fillSelect($("preset"), PRESET_ITEMS); fillSelect($("format"), FORMAT_ITEMS); fillSelect($("lufs"), LUFS_ITEMS);
   $("back").textContent = (S.lang === "ar" ? t("back") + "  ›" : "‹  " + t("back"));
+  $("libBack").textContent = $("back").textContent;
+  $("libBtn").title = t("library");
+  fillSelect($("libSort"), [["new", "s_new"], ["title", "s_title"], ["artist", "s_artist"], ["dur", "s_dur"]]);
+  if (S.view === "library") renderLibrary();
   const tips = { pmBtn: "player_mode", plAdd: "pl_add", plQueue: "pl_queue", plCorner: "pl_corner", plBack: "pl_back" };
   for (const id in tips) $(id).title = t(tips[id]);
   setFiles(S.files); showOut(); fillAbout(); showUpdBanner(); updatePin();
@@ -335,12 +363,15 @@ $("saveDefaults").onclick = async () => {
 // ---------- إرسال (عدد الملفات بنفس الوقت تلقائي حسب قدرة الجهاز، والقوائم تُكتشف تلقائيًا) ----------
 $("go").onclick = async () => {
   $("formErr").textContent = "";
-  const urls = $("urls").value.split(/\s+/).filter(u => /^https?:\/\//.test(u) || /^spotify:/.test(u));
-  if (!urls.length && !S.files.length) { $("formErr").textContent = t("need_input"); return; }
+  const lines = $("urls").value.split(/\n+/).map(l => l.trim()).filter(Boolean);
+  const isLink = l => /^https?:\/\//.test(l) || /^spotify:/.test(l);
+  const urls = lines.flatMap(l => l.split(/\s+/)).filter(isLink);
+  const queries = lines.filter(l => !/https?:\/\/|spotify:/.test(l));   // اسم أغنية بدون رابط: نبحث عنها
+  if (!urls.length && !queries.length && !S.files.length) { $("formErr").textContent = t("need_input"); return; }
   const base = { preset: $("preset").value, format: $("format").value, ...tuning() };
   $("go").disabled = true;
   try {
-    if (urls.length) await api("/api/submit", { urls, ...base });
+    if (urls.length || queries.length) await api("/api/submit", { urls, queries, ...base });
     for (let i = 0; i < S.files.length; i++) {
       $("formErr").textContent = t("uploading", { i: i + 1, n: S.files.length });
       const f = S.files[i];
@@ -416,6 +447,7 @@ function renderResult(c) {
     <div class="more"></div><div class="spec" hidden></div>`;
   c.res.querySelector(".meta").textContent =
     (it.cached ? t("cached_note") + "\n" : "") +
+    (r.match ? t("from_src", { c: r.match.channel || "YouTube", t: r.match.title }) + "\n" : "") +
     `${msg(r.reason_key, r.reason_params)}\n${t("source")}: ${src}  ·  ${t("preset_used")}: ${used}\n` +
     `${t("loudness")}: ${f1(r.lufs_before)} ← ${f1(r.lufs_after)} LUFS  ·  ${t("peak")}: ${f1(r.tp_before)} ← ${f1(r.tp_after)} dBTP`;
   const a = c.audio = c.res.querySelector("audio");
@@ -440,6 +472,10 @@ function renderResult(c) {
 
   const more = c.res.querySelector(".more"), spec = c.res.querySelector(".spec");
   more.append(btn("link", "📂 " + t("show_folder"), () => api("/api/open", {})));
+  if (it.can_next) {
+    const nb = btn("link", "↻ " + t("not_this"), async () => { nb.disabled = true; nb.textContent = t("trying_next"); await api("/api/next_match", { id: it.id }); poll(); });
+    more.append(nb);
+  }
   if (it.can_tags) {
     const tagsBox = document.createElement("div"); tagsBox.className = "tags"; tagsBox.hidden = true;
     more.append(btn("link", t("tags_edit"), async () => {
@@ -540,13 +576,17 @@ function show(view) {
   if (view !== "settings") lastView = view;
   S.view = view;
   $("main").hidden = view !== "main"; $("settings").hidden = view !== "settings"; $("player").hidden = view !== "player";
-  $("gear").hidden = view === "settings";
+  $("library").hidden = view !== "library";
+  $("gear").hidden = view === "settings"; $("libBtn").hidden = view === "library";
+  if (view === "library") loadLibrary();
   closeMenu();
   window.scrollTo(0, 0);
   if (view === "settings") loadSettings();
 }
 $("gear").onclick = () => show("settings");
-$("back").onclick = () => show(lastView === "player" ? "main" : lastView);
+$("back").onclick = () => show(lastView === "player" || lastView === "library" ? "main" : lastView);
+$("libBtn").onclick = () => show("library");
+$("libBack").onclick = () => show("main");
 $("repoLink").onclick = () => api("/api/open_repo", {});
 
 function fillAbout() {
@@ -559,6 +599,8 @@ async function loadSettings() {
   setSeg("langSeg", S.lang); setSeg("themeSeg", S.cfg.theme);
   $("lightMode").checked = S.cfg.light; $("keepOrig").checked = S.cfg.keep_original; $("notifyOn").checked = S.cfg.notify;
   $("autoCheck").checked = S.cfg.auto_check; $("autoPlayer").checked = S.cfg.auto_player;
+  $("trimOn").checked = S.cfg.trim_silence; $("trayClose").checked = S.cfg.tray_close;
+  $("trayRow").hidden = !(S.state && S.state.platform === "win32" && S.state.mode === "window");
   $("outPath").value = S.cfg.out;
   $("watchOn").checked = S.cfg.watch_on; $("watchPath").value = S.cfg.watch || "";
   fillAbout();
@@ -569,6 +611,15 @@ bindSeg("langSeg", async v => { S.lang = v; await saveCfg({ lang: v }); applyLan
 bindSeg("themeSeg", async v => { await saveCfg({ theme: v }); applyTheme(); });
 $("keepOrig").onchange = e => saveCfg({ keep_original: e.target.checked });
 $("autoPlayer").onchange = e => saveCfg({ auto_player: e.target.checked });
+$("trimOn").onchange = e => saveCfg({ trim_silence: e.target.checked });
+$("trayClose").onchange = e => saveCfg({ tray_close: e.target.checked });
+$("logCopy").onclick = async () => {
+  const text = await (await fetch("/api/log")).text();
+  try { await navigator.clipboard.writeText(text); $("logStatus").textContent = t("log_copied"); $("logBoxRow").hidden = true; }
+  catch (e) {   // النسخ التلقائي ممنوع: نعرض النص عشان ينسخه بنفسه
+    $("logBox").value = text; $("logBoxRow").hidden = false; $("logBox").select(); $("logStatus").textContent = t("log_manual");
+  }
+};
 $("lightMode").onchange = e => saveCfg({ light: e.target.checked });
 $("notifyOn").onchange = e => saveCfg({ notify: e.target.checked });
 $("autoCheck").onchange = e => saveCfg({ auto_check: e.target.checked });
@@ -644,6 +695,70 @@ $("engUpdate").onclick = async () => {
 };
 $("quit").onclick = async () => { await api("/api/quit", {}); document.body.innerHTML = ""; window.close(); };
 
+// ---------- المكتبة: كل الأغاني في مجلد الحفظ ----------
+const L = { files: [], timer: null };
+const libKey = f => {
+  const base = (f.title || f.name.replace(/_enhanced( \(\d+\))?$/, "").replace(/ \(\d+\)$/, "")).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  return base + "|" + (f.artist || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+};
+async function loadLibrary() {
+  clearTimeout(L.timer);
+  try {
+    const r = await api("/api/library");
+    L.files = r.files; renderLibrary();
+    $("libStatus").textContent = r.scanning ? t("lib_scanning", { n: r.files.length }) : t("lib_count", { n: r.files.length });
+    if (r.scanning && S.view === "library") L.timer = setTimeout(loadLibrary, 1500);
+  } catch (e) { /* */ }
+}
+function libVisible() {
+  const q = $("libSearch").value.trim().toLowerCase();
+  const groups = {};
+  L.files.forEach(f => { const k = libKey(f); (groups[k] = groups[k] || []).push(f); });
+  const dupOf = f => {   // نفس الاسم والفنان ومدة متقاربة (±3 ثواني)
+    const g = groups[libKey(f)] || [];
+    return g.some(o => o !== f && (!o.duration || !f.duration || Math.abs(o.duration - f.duration) <= 3));
+  };
+  let list = L.files.map(f => Object.assign(f, { dup: dupOf(f) }));
+  if (q) list = list.filter(f => [f.title, f.artist, f.album, f.name].join(" ").toLowerCase().includes(q));
+  if ($("libDups").checked) list = list.filter(f => f.dup);
+  const sort = $("libSort").value;
+  const name = f => (f.title || f.name).toLowerCase();
+  list.sort(sort === "title" ? (a, b) => name(a).localeCompare(name(b)) : sort === "artist" ? (a, b) => (a.artist || "~").localeCompare(b.artist || "~") || name(a).localeCompare(name(b))
+    : sort === "dur" ? (a, b) => (b.duration || 0) - (a.duration || 0) : (a, b) => b.mtime - a.mtime);
+  return list;
+}
+function renderLibrary() {
+  const ol = $("libList"); ol.innerHTML = "";
+  const list = libVisible();
+  if (!L.files.length) { ol.innerHTML = `<li class="empty">${t("lib_empty")}</li>`; return; }
+  list.slice(0, 1000).forEach(f => {
+    const li = document.createElement("li");
+    li.innerHTML = '<div class="lt"><div class="ln"></div><div class="sub la"></div></div><span class="ld"></span><span class="lb"></span>';
+    li.querySelector(".ln").textContent = f.title || f.name;
+    li.querySelector(".la").textContent = [f.artist, f.album].filter(Boolean).join(" · ") + (f.dup ? "  ·  ⚠ " + t("lib_dup_badge") : "");
+    li.querySelector(".ld").textContent = f.duration ? fmtTime(f.duration) : "";
+    const b = li.querySelector(".lb");
+    b.append(btn("tint mini-btn", "▶", () => libPlay([f.path], true)));
+    const add = btn("ictl", "+", () => libPlay([f.path], false)); add.title = t("lib_add"); b.append(add);
+    const del = btn("ictl danger", "🗑", async () => {
+      if (!confirm(t("lib_confirm"))) return;
+      const r = await api("/api/library/delete", { path: f.path });
+      if (r.ok) { L.files = L.files.filter(x => x !== f); renderLibrary(); }
+    });
+    del.title = t("lib_delete"); b.append(del);
+    ol.append(li);
+  });
+}
+async function libPlay(paths, play) {
+  const r = await api("/api/library/play", { paths });
+  mergeTracks(r.tracks, null);
+  if (play && r.index !== null && r.index !== undefined) { audioGraph(); playIndex(r.index); }
+}
+$("libSearch").addEventListener("input", renderLibrary);
+$("libSort").addEventListener("change", renderLibrary);
+$("libDups").addEventListener("change", renderLibrary);
+$("libPlayAll").onclick = () => { const list = libVisible(); if (list.length) libPlay(list.map(f => f.path), true); };
+
 // ---------- الدورة الرئيسية ----------
 let timer = null;
 async function poll() {
@@ -661,7 +776,7 @@ async function poll() {
       fillSelect($("preset"), PRESET_ITEMS); $("preset").value = s.config.preset;
       fillSelect($("format"), FORMAT_ITEMS); $("format").value = s.config.format;
       fillSelect($("lufs"), LUFS_ITEMS); $("lufs").value = String(s.config.lufs);
-      applyLang();
+      applyLang(); fillEq();
       if (new URLSearchParams(location.search).get("view") === "player") enterPlayer(true);
     }
     renderBanner(s); render(s.items); fillAbout();
@@ -669,7 +784,7 @@ async function poll() {
     if (!S.bootChecked) {
       S.bootChecked = true;
       if (S.cfg.auto_check) checkUpdates(true).catch(() => { });
-      api("/api/player/tracks").then(r => { if (r.tracks.length && !P.tracks.length) { P.tracks = r.tracks; renderQueue(); updateNow(); } }).catch(() => { });
+      api("/api/player/tracks").then(r => { if (r.tracks.length && !P.tracks.length) resumePlayer(r); }).catch(() => { });
     }
   } catch (e) { /* الخادم غير متاح مؤقتًا */ }
   timer = setTimeout(poll, document.hidden ? 30000 : busy ? 1000 : 4000);
@@ -677,21 +792,56 @@ async function poll() {
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 
 // ======================= المشغّل =======================
-const P = { tracks: [], idx: -1, shuffle: false, repeat: "off", order: [], mode: "direct", seeking: false };
-const audio = $("audio");
+// عنصرين audio: واحد شغّال وواحد احتياط للانتقال الناعم (crossfade). كل الأحداث نتعامل معها من العنصر الشغّال فقط.
+const P = { tracks: [], idx: -1, shuffle: false, repeat: "off", order: [], mode: "direct", seeking: false, fading: false, pane: "queue",
+  lyrics: null, lyricsFor: null };
+const EL = [$("audio"), $("audio2")];
+let cur = EL[0];
+const other = () => (cur === EL[0] ? EL[1] : EL[0]);
 const MIME = { mp3: "audio/mpeg", m4a: "audio/mp4", aac: "audio/aac", wav: "audio/wav", flac: "audio/flac", ogg: "audio/ogg",
   opus: 'audio/ogg; codecs="opus"', webm: "audio/webm", weba: "audio/webm", mp4: "video/mp4" };
-const canDirect = ext => !!MIME[ext] && audio.canPlayType(MIME[ext]) !== "";
+const canDirect = ext => !!MIME[ext] && cur.canPlayType(MIME[ext]) !== "";
 const fmtTime = s => { if (!isFinite(s) || s < 0) return "0:00"; s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); };
 const trackName = tr => tr.title || tr.name;
+const srcFor = (tr, mode) => tr.blob || `/play/${tr.id}` + (mode === "transcode" ? "?mode=transcode" : "");
+
+// ---- المعادل (Web Audio): بيس / وسط / تريبل، يشتغل وقت التشغيل ----
+const AX = { ctx: null, gains: [], filters: [] };
+function audioGraph() {
+  if (AX.ctx) { if (AX.ctx.state === "suspended") AX.ctx.resume().catch(() => { }); return AX.ctx; }
+  try {
+    const ctx = AX.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const low = ctx.createBiquadFilter(); low.type = "lowshelf"; low.frequency.value = 120;
+    const mid = ctx.createBiquadFilter(); mid.type = "peaking"; mid.frequency.value = 1200; mid.Q.value = 0.8;
+    const high = ctx.createBiquadFilter(); high.type = "highshelf"; high.frequency.value = 7500;
+    low.connect(mid); mid.connect(high); high.connect(ctx.destination);
+    AX.filters = [low, mid, high];
+    AX.gains = EL.map(el => { const src = ctx.createMediaElementSource(el); const g = ctx.createGain(); src.connect(g); g.connect(low); return g; });
+    applyEq();
+  } catch (e) { AX.ctx = null; }
+  return AX.ctx;
+}
+function applyEq() {
+  const eq = (S.cfg && S.cfg.eq) || [0, 0, 0];
+  AX.filters.forEach((f, i) => { f.gain.value = eq[i] || 0; });
+}
+const gainOf = el => AX.gains[EL.indexOf(el)];
+function setGain(el, v) { const g = gainOf(el); if (g) { g.gain.cancelScheduledValues(0); g.gain.value = v; } }
 
 // ---- وضع المشغّل: النافذة تصير مستطيل صغير قرب زاوية الشاشة (مو ملصوق بالحافة) ----
 function windowMode(mode) { return api("/api/window/mode", { mode, corner: (S.cfg && S.cfg.mini_corner) || "bottom" }).catch(() => ({})); }
+function setPane(name) {
+  P.pane = name; setSeg("qTabs", name);
+  $("paneQueue").hidden = name !== "queue"; $("paneLyrics").hidden = name !== "lyrics"; $("paneEq").hidden = name !== "eq";
+  if (name === "lyrics") loadLyrics();
+}
+bindSeg("qTabs", setPane);
 function enterPlayer(already) {
   S.mini = true;
   S.tall = !P.tracks.length;   // قائمة فاضية: نفتح القائمة عشان يبان زر الإضافة والشرح
   document.body.classList.add("mini");
   $("qWrap").hidden = !S.tall; $("plQueue").classList.toggle("on", S.tall);
+  setPane(P.pane);
   show("player");
   if (!already || S.tall) windowMode(S.tall ? "mini_tall" : "mini");
 }
@@ -733,7 +883,7 @@ function renderQueue() {
     li.innerHTML = '<span class="n"></span><span class="t"></span><span class="d"></span>';
     li.children[0].textContent = i === P.idx ? "▶" : i + 1; li.children[1].textContent = trackName(tr);
     li.children[2].textContent = tr.duration ? fmtTime(tr.duration) : "";
-    li.onclick = () => playIndex(i);
+    li.onclick = () => { audioGraph(); playIndex(i); };
     ol.append(li);
   });
   $("plEmpty").hidden = P.tracks.length > 0;
@@ -748,6 +898,7 @@ function updateNow() {
   if ("mediaSession" in navigator && tr) {
     try { navigator.mediaSession.metadata = new MediaMetadata({ title: trackName(tr), artist: tr.artist || "", album: tr.album || "" }); } catch (e) { /* غير مدعوم */ }
   }
+  if (P.pane === "lyrics" && S.tall) loadLyrics();
 }
 async function loadMeta(i) {
   const tr = P.tracks[i]; if (!tr || tr.blob || tr.meta) return;
@@ -757,19 +908,23 @@ async function loadMeta(i) {
   if (li) { li.children[1].textContent = trackName(tr); li.children[2].textContent = tr.duration ? fmtTime(tr.duration) : ""; }
   if (i === P.idx) updateNow();
 }
-function setSrc(tr, mode) {
+function setSrc(tr, mode, startAt) {
   P.mode = mode;
-  audio.src = tr.blob || `/play/${tr.id}` + (mode === "transcode" ? "?mode=transcode" : "");
+  cur.src = srcFor(tr, mode);
   if (mode === "transcode") $("npArtist").textContent = t("pl_preparing");
-  audio.play().catch(() => { });
+  if (startAt) cur.addEventListener("loadedmetadata", () => { cur.currentTime = startAt; }, { once: true });
 }
-function playIndex(i) {
+function playIndex(i, opts = {}) {
   if (i < 0 || i >= P.tracks.length) return;
+  P.fading = false;
+  other().pause(); setGain(other(), 0); setGain(cur, 1);
   P.idx = i; const tr = P.tracks[i];
   rebuildOrder(); renderQueue(); updateNow();
-  setSrc(tr, tr.blob || canDirect(tr.ext) ? "direct" : "transcode");
+  setSrc(tr, tr.blob || canDirect(tr.ext) ? "direct" : "transcode", opts.at);
+  if (!opts.paused) cur.play().catch(() => { });
   loadMeta(i).then(() => { for (let k = 1; k <= 2; k++) loadMeta((i + k) % P.tracks.length); });
   const li = $("queue").children[i]; if (li && li.scrollIntoView) li.scrollIntoView({ block: "nearest" });
+  savePlayer();
 }
 function step(delta) {
   if (!P.tracks.length) return null;
@@ -778,59 +933,178 @@ function step(delta) {
   if (P.repeat === "all") return P.order[(np + P.order.length) % P.order.length];
   return null;
 }
-function next() { const i = step(1); if (i !== null) playIndex(i); else audio.pause(); }
+function next() { const i = step(1); if (i !== null) playIndex(i); else cur.pause(); }
 function prev() {
-  if (audio.currentTime > 3) { audio.currentTime = 0; return; }
-  const i = step(-1); if (i !== null) playIndex(i); else audio.currentTime = 0;
+  if (cur.currentTime > 3) { cur.currentTime = 0; return; }
+  const i = step(-1); if (i !== null) playIndex(i); else cur.currentTime = 0;
 }
-const idle = () => P.idx < 0 || audio.ended || !audio.src;
-// قائمة جديدة من الخادم (إضافة فقط): نحافظ على الأغنية الحالية، ونبدأ التشغيل لو المشغّل فاضي
+const idle = () => P.idx < 0 || cur.ended || !cur.src;
 function mergeTracks(tracks, playAt) {
-  const cur = P.tracks[P.idx];
+  const was = P.tracks[P.idx];
   const known = {}; P.tracks.forEach(tr => { known[tr.id] = tr; });
   P.tracks = tracks.map(tr => Object.assign(known[tr.id] || {}, tr));
-  P.idx = cur ? P.tracks.findIndex(tr => tr.id === cur.id) : -1;
+  P.idx = was ? P.tracks.findIndex(tr => tr.id === was.id) : -1;
   rebuildOrder(); renderQueue();
   if (playAt !== undefined && playAt !== null && playAt >= 0 && idle()) playIndex(playAt);
 }
-audio.addEventListener("ended", () => { if (P.repeat === "one") { audio.currentTime = 0; audio.play(); } else next(); });
-audio.addEventListener("error", () => {
-  const tr = P.tracks[P.idx]; if (!tr || !audio.src) return;
-  if (P.mode === "direct" && !tr.blob) { setSrc(tr, "transcode"); return; }  // المتصفح ما يشغّل الصيغة: نحوّلها مؤقتًا
-  $("npArtist").textContent = t("pl_failed");
-  setTimeout(() => { if (P.tracks[P.idx] === tr) next(); }, 1500);
+
+// ---- الانتقال الناعم: قبل نهاية الأغنية بـ N ثانية، الجاية تبدأ والحالية تختفي تدريجيًا ----
+function maybeCrossfade() {
+  const cf = (S.cfg && S.cfg.crossfade) || 0;
+  if (!cf || P.fading || P.repeat === "one" || !AX.ctx || !cur.duration || cur.paused) return;
+  const left = cur.duration - cur.currentTime;
+  if (left > cf || left < 0.3) return;
+  const ni = step(1); if (ni === null) return;
+  const tr = P.tracks[ni]; if (!tr) return;
+  P.fading = true;
+  const old = cur, nxt = other(), now = AX.ctx.currentTime;
+  nxt.src = srcFor(tr, tr.blob || canDirect(tr.ext) ? "direct" : "transcode");
+  const go = gainOf(old), gn = gainOf(nxt);
+  gn.gain.cancelScheduledValues(now); gn.gain.setValueAtTime(0, now); gn.gain.linearRampToValueAtTime(1, now + left);
+  go.gain.cancelScheduledValues(now); go.gain.setValueAtTime(go.gain.value, now); go.gain.linearRampToValueAtTime(0, now + left);
+  nxt.play().catch(() => { });
+  cur = nxt; P.idx = ni; P.mode = tr.blob || canDirect(tr.ext) ? "direct" : "transcode";
+  rebuildOrder(); renderQueue(); updateNow(); savePlayer();
+  loadMeta(ni);
+  setTimeout(() => { old.pause(); P.fading = false; }, left * 1000 + 200);
+}
+
+// ---- الأحداث (من العنصر الشغّال فقط) ----
+const fromCur = fn => e => { if (e.target === cur) fn(e); };
+EL.forEach(el => {
+  el.addEventListener("ended", fromCur(() => { if (P.repeat === "one") { cur.currentTime = 0; cur.play(); } else next(); }));
+  el.addEventListener("error", fromCur(() => {
+    const tr = P.tracks[P.idx]; if (!tr || !cur.src) return;
+    if (P.mode === "direct" && !tr.blob) { setSrc(tr, "transcode"); cur.play().catch(() => { }); return; }  // المتصفح ما يشغّل الصيغة: نحوّلها مؤقتًا
+    $("npArtist").textContent = t("pl_failed");
+    setTimeout(() => { if (P.tracks[P.idx] === tr) next(); }, 1500);
+  }));
+  el.addEventListener("playing", fromCur(() => { const tr = P.tracks[P.idx]; if (tr) $("npArtist").textContent = [tr.artist, tr.album].filter(Boolean).join(" · "); setPlayIcon(true); }));
+  el.addEventListener("pause", fromCur(() => { setPlayIcon(false); savePlayer(); }));
+  el.addEventListener("timeupdate", fromCur(() => {
+    const d = cur.duration || (P.tracks[P.idx] && P.tracks[P.idx].duration) || 0;
+    $("tCur").textContent = fmtTime(cur.currentTime); $("tDur").textContent = fmtTime(d);
+    if (!P.seeking && d) $("seek").value = Math.round(1000 * cur.currentTime / d);
+    syncLyrics(cur.currentTime);
+    maybeCrossfade();
+    if (Date.now() - (P.savedAt || 0) > 5000) savePlayer();
+  }));
+  el.addEventListener("loadedmetadata", fromCur(() => { $("tDur").textContent = fmtTime(cur.duration); }));
 });
 const setPlayIcon = playing => { $("icoPlay").hidden = playing; $("icoPause").hidden = !playing; };
-audio.addEventListener("playing", () => { const tr = P.tracks[P.idx]; if (tr) $("npArtist").textContent = [tr.artist, tr.album].filter(Boolean).join(" · "); setPlayIcon(true); });
-audio.addEventListener("pause", () => setPlayIcon(false));
-audio.addEventListener("timeupdate", () => {
-  const d = audio.duration || (P.tracks[P.idx] && P.tracks[P.idx].duration) || 0;
-  $("tCur").textContent = fmtTime(audio.currentTime); $("tDur").textContent = fmtTime(d);
-  if (!P.seeking && d) $("seek").value = Math.round(1000 * audio.currentTime / d);
-});
-audio.addEventListener("loadedmetadata", () => { $("tDur").textContent = fmtTime(audio.duration); });
-$("seek").addEventListener("input", () => { P.seeking = true; const d = audio.duration; if (d) $("tCur").textContent = fmtTime(d * $("seek").value / 1000); });
-$("seek").addEventListener("change", () => { const d = audio.duration; if (d) audio.currentTime = d * $("seek").value / 1000; P.seeking = false; });
-$("btnPlay").onclick = () => { if (P.idx < 0 && P.tracks.length) playIndex(0); else if (audio.paused) audio.play().catch(() => { }); else audio.pause(); };
-$("btnNext").onclick = next; $("btnPrev").onclick = prev;
+$("seek").addEventListener("input", () => { P.seeking = true; const d = cur.duration; if (d) $("tCur").textContent = fmtTime(d * $("seek").value / 1000); });
+$("seek").addEventListener("change", () => { const d = cur.duration; if (d) cur.currentTime = d * $("seek").value / 1000; P.seeking = false; });
+function togglePlay() {
+  audioGraph();
+  if (P.idx < 0 && P.tracks.length) playIndex(0);
+  else if (cur.paused) { if (!cur.src && P.tracks[P.idx]) playIndex(P.idx); else cur.play().catch(() => { }); }
+  else cur.pause();
+}
+$("btnPlay").onclick = togglePlay;
+// المعادل يبدأ فقط بضغطة من المستخدم (المتصفح يمنع الصوت في Web Audio بدون تفاعل، فالتشغيل التلقائي يبقى عادي)
+$("btnNext").onclick = () => { audioGraph(); next(); }; $("btnPrev").onclick = () => { audioGraph(); prev(); };
 $("btnShuffle").onclick = () => { P.shuffle = !P.shuffle; $("btnShuffle").classList.toggle("on", P.shuffle); rebuildOrder(); };
 $("btnRepeat").onclick = () => {
   P.repeat = P.repeat === "off" ? "all" : P.repeat === "all" ? "one" : "off";
   $("rep1").hidden = P.repeat !== "one"; $("btnRepeat").classList.toggle("on", P.repeat !== "off");
 };
 try { const v = localStorage.getItem("msga_vol"); if (v !== null) $("vol").value = v; } catch (e) { /* التخزين غير متاح */ }
-audio.volume = $("vol").value / 100;
-$("vol").addEventListener("input", () => { audio.volume = $("vol").value / 100; try { localStorage.setItem("msga_vol", $("vol").value); } catch (e) { /* */ } });
+EL.forEach(el => { el.volume = $("vol").value / 100; });
+$("vol").addEventListener("input", () => { EL.forEach(el => { el.volume = $("vol").value / 100; }); try { localStorage.setItem("msga_vol", $("vol").value); } catch (e) { /* */ } });
 document.addEventListener("keydown", e => {
   if (S.view !== "player" || DD.open || (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target.type !== "range")) return;
-  if (e.code === "Space") { e.preventDefault(); $("btnPlay").click(); }
+  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
   else if (e.shiftKey && e.code === "ArrowRight") next();
   else if (e.shiftKey && e.code === "ArrowLeft") prev();
 });
+// أزرار الوسائط: من ويندوز (حتى لو البرنامج مو قدامك) أو من المتصفح
+window.mediaKey = name => { if (name === "toggle") togglePlay(); else if (name === "next") next(); else if (name === "prev") prev(); else if (name === "stop") cur.pause(); };
 if ("mediaSession" in navigator) {
   const set = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch (e) { /* */ } };
-  set("play", () => audio.play()); set("pause", () => audio.pause()); set("previoustrack", prev); set("nexttrack", next);
+  set("play", togglePlay); set("pause", () => cur.pause()); set("previoustrack", prev); set("nexttrack", next);
 }
+
+// ---- يتذكر مكانه: القائمة والأغنية والثانية ----
+function savePlayer() {
+  const tr = P.tracks[P.idx];
+  if (tr && tr.blob) return;
+  P.savedAt = Date.now();
+  api("/api/player/save", { idx: P.idx, pos: cur.currentTime || 0 }).catch(() => { });
+}
+function resumePlayer(r) {
+  P.tracks = r.tracks; renderQueue();
+  const res = r.resume || {};
+  if (res.idx >= 0 && res.idx < P.tracks.length) {
+    P.idx = res.idx; rebuildOrder(); renderQueue(); updateNow();
+    const tr = P.tracks[P.idx];
+    setSrc(tr, canDirect(tr.ext) ? "direct" : "transcode", res.pos > 1 ? res.pos : 0);   // جاهز بنفس المكان، بدون تشغيل تلقائي
+    if (P.mode === "transcode") $("npArtist").textContent = "";
+    loadMeta(P.idx);
+  } else updateNow();
+}
+
+// ---- الكلمات (LRCLIB): متزامنة، والضغط على سطر ينقلك له ----
+function parseLrc(text) {
+  const out = [];
+  (text || "").split(/\r?\n/).forEach(line => {
+    const tags = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    const words = line.replace(/\[[^\]]*\]/g, "").trim();
+    tags.forEach(m => out.push({ t: +m[1] * 60 + +m[2], text: words }));
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+async function loadLyrics() {
+  const tr = P.tracks[P.idx], box = $("paneLyrics");
+  if (!tr || tr.blob) { box.innerHTML = `<div class="empty">${t(tr ? "lyrics_none" : "pl_nothing")}</div>`; P.lyrics = null; return; }
+  if (P.lyricsFor === tr.id) return;
+  P.lyricsFor = tr.id; P.lyrics = null;
+  box.innerHTML = `<div class="empty">${t("lyrics_loading")}</div>`;
+  let r; try { r = await api("/api/player/lyrics?id=" + encodeURIComponent(tr.id)); } catch (e) { r = { none: true }; }
+  if (P.lyricsFor !== tr.id) return;
+  box.innerHTML = "";
+  if (r.synced) {
+    P.lyrics = parseLrc(r.synced);
+    P.lyrics.forEach((l, i) => {
+      const d = document.createElement("div"); d.className = "lline"; d.textContent = l.text || "♪"; d.dataset.i = i;
+      d.onclick = () => { cur.currentTime = l.t + 0.01; };
+      box.append(d);
+    });
+  } else if (r.plain) {
+    const d = document.createElement("div"); d.className = "lplain"; d.textContent = r.plain; box.append(d);
+  } else { box.innerHTML = `<div class="empty">${t("lyrics_none")}</div>`; return; }
+  const src = document.createElement("div"); src.className = "sub lsrc"; src.textContent = t("lyrics_src"); box.append(src);
+  syncLyrics(cur.currentTime);
+}
+function syncLyrics(time) {
+  if (!P.lyrics || P.pane !== "lyrics" || $("qWrap").hidden) return;
+  let k = -1;
+  for (let i = 0; i < P.lyrics.length; i++) { if (P.lyrics[i].t <= time + 0.15) k = i; else break; }
+  if (k === P.lyricsLine) return;
+  P.lyricsLine = k;
+  const box = $("paneLyrics");
+  box.querySelectorAll(".lline.on").forEach(el => el.classList.remove("on"));
+  const el = box.querySelector(`.lline[data-i="${k}"]`);
+  if (el) { el.classList.add("on"); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+}
+
+// ---- المعادل + الانتقال الناعم: الإعدادات ----
+function fillEq() {
+  const eq = (S.cfg && S.cfg.eq) || [0, 0, 0];
+  [0, 1, 2].forEach(i => { $("eq" + i).value = eq[i]; $("eq" + i + "v").textContent = (eq[i] > 0 ? "+" : "") + eq[i]; });
+  $("xfade").value = (S.cfg && S.cfg.crossfade) || 0; $("xfadev").textContent = $("xfade").value;
+}
+let eqSave = null;
+[0, 1, 2].forEach(i => $("eq" + i).addEventListener("input", () => {
+  const eq = [0, 1, 2].map(k => +$("eq" + k).value);
+  S.cfg.eq = eq; $("eq" + i + "v").textContent = (eq[i] > 0 ? "+" : "") + eq[i];
+  audioGraph(); applyEq();
+  clearTimeout(eqSave); eqSave = setTimeout(() => saveCfg({ eq }), 400);
+}));
+$("xfade").addEventListener("input", () => {
+  S.cfg.crossfade = +$("xfade").value; $("xfadev").textContent = $("xfade").value;
+  clearTimeout(eqSave); eqSave = setTimeout(() => saveCfg({ crossfade: +$("xfade").value }), 400);
+});
+$("eqReset").onclick = async () => { await saveCfg({ eq: [0, 0, 0], crossfade: 0 }); fillEq(); applyEq(); };
 
 // ---- زر + : إضافة أغاني / مجلد / قائمة m3u (تنضاف للقائمة بدون ما تمسح الموجود) ----
 async function plAdd(kind) {
@@ -846,7 +1120,7 @@ $("plAdd").onclick = e => {
     { label: t("pl_add_files"), run: () => plAdd("files") },
     { label: t("pl_add_folder"), run: () => plAdd("folder") },
     { label: t("pl_add_list"), run: () => plAdd("files") },
-    { label: t("pl_clear"), run: async () => { await api("/api/player/clear", {}); audio.pause(); audio.removeAttribute("src"); P.tracks = []; P.idx = -1; renderQueue(); updateNow(); } },
+    { label: t("pl_clear"), run: async () => { await api("/api/player/clear", {}); EL.forEach(el => { el.pause(); el.removeAttribute("src"); }); P.tracks = []; P.idx = -1; renderQueue(); updateNow(); } },
   ], { minWidth: 220 });
 };
 $("plInput").addEventListener("change", e => {
@@ -867,7 +1141,7 @@ async function playResult(itemId) {
   const r = await api("/api/player/add_item", { id: itemId });
   if (r.error) return;
   mergeTracks(r.tracks, null);
-  playIndex(r.index);
+  audioGraph(); playIndex(r.index);
   enterPlayer(false);
 }
 

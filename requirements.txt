@@ -2,3 +2,6 @@
 yt-dlp
 # ويندوز وماك: نافذة البرنامج (بدون متصفح). على Linux ما تحتاجها (يستخدم GTK + WebKit2 من النظام)
 pywebview; sys_platform != "linux"
+# ويندوز: أيقونة جنب الساعة
+pystray; sys_platform == "win32"
+pillow; sys_platform == "win32"
