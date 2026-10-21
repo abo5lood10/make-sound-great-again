@@ -4,6 +4,7 @@
 Linux: نافذة مستقلة (GTK + WebKit2)، والمتصفح كحل أخير لو ما فيه نافذة.
 """
 import argparse
+import os
 import json
 import subprocess
 import sys
@@ -181,7 +182,7 @@ def selftest():
     httpd.shutdown()
     passed = ok == (["page", "tray", "keys", "mini"] if core.IS_WIN else ["page", "mini"])
     print("window selftest:", "OK" if passed else f"FAILED {ok}", flush=True)
-    sys.exit(0 if passed else 1)
+    os._exit(0 if passed else 1)   # نطلع فورًا حتى لو بقي خيط (أيقونة / أزرار الوسائط)
 
 
 def main(argv=None):
@@ -234,7 +235,10 @@ def main(argv=None):
         try:
             runner(url, geo)
             httpd.shutdown()
-            return
+            # النافذة انقفلت: نطلع بالكامل (خيوط الأيقونة وأزرار الوسائط ما تخلي البرنامج معلّق بالخلفية)
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
         except Exception as e:
             if DESKTOP_ONLY:  # ويندوز / ماك: ما نرجع للمتصفح، نوضّح المشكلة
                 httpd.shutdown()
