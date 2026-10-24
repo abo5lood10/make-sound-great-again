@@ -724,7 +724,7 @@ class Handler(BaseHTTPRequestHandler):
     def _opts_static(cfg):
         return {"preset": cfg["preset"], "format": cfg["format"], "out_dir": cfg["out"], "light": cfg["light"],
                 "bass": cfg["bass"], "treble": cfg["treble"], "lufs": cfg["lufs"],
-                "trim_silence": cfg["trim_silence"]}, core.auto_jobs()
+                "trim_silence": cfg["trim_silence"], "twitch_raw": cfg["twitch_raw"]}, core.auto_jobs()
 
     def _opts(self, d):
         cfg = core.load_config()
@@ -745,7 +745,7 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return {"preset": preset, "format": fmt, "out_dir": cfg["out"], "light": cfg["light"],
                 "bass": bass, "treble": treble, "lufs": lufs, "keep_original": cfg["keep_original"],
-                "trim_silence": cfg["trim_silence"]}, core.auto_jobs()
+                "trim_silence": cfg["trim_silence"], "twitch_raw": cfg["twitch_raw"]}, core.auto_jobs()
 
     def _submit(self, d):
         parsed = self._opts(d)

@@ -877,6 +877,79 @@ class TwitchSupport(unittest.TestCase):
         self.assertFalse(vod["live"])
 
 
+def stream_md5(path):
+    """بصمة حزم الصوت نفسها (بدون الحاوية): تتطابق فقط لو ما صار أي تعديل أو إعادة ترميز."""
+    r = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-c", "copy", "-f", "md5", "-"],
+                       capture_output=True, text=True)
+    return r.stdout.strip()
+
+
+def decoded_md5(path):
+    """بصمة الصوت بعد فك الترميز: تتطابق فقط لو إطارات AAC نفسها ما تغيّرت (حتى لو اختلفت الحاوية)."""
+    r = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-f", "md5", "-"],
+                       capture_output=True, text=True)
+    return r.stdout.strip()
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+class TwitchRaw(unittest.TestCase):
+    def run_raw(self, source_file, url="https://www.twitch.tv/videos/123", **opts):
+        d = Path(tempfile.mkdtemp())
+
+        def fake_download(u, dest, cb, token=None, match_filter=None, live=False, info_cb=None):
+            shutil.copy(source_file, Path(dest) / Path(source_file).name)
+            return Path(dest) / Path(source_file).name, None
+
+        with mock.patch.object(core, "download", side_effect=fake_download):
+            return core.process_item(url, {"out_dir": str(d), "format": "flac", **opts}), d
+
+    def test_vod_is_saved_as_the_untouched_audio_stream(self):
+        src = Path(tempfile.mkdtemp()) / "Stream title.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=6",
+                        "-f", "lavfi", "-i", "color=c=blue:s=64x64:d=6", "-c:a", "aac", "-b:a", "128k", "-c:v", "libx264",
+                        "-shortest", str(src)], check=True)       # فيديو + صوت (مثل مقطع تويتش)
+        res, d = self.run_raw(src)
+        out = Path(res["output"])
+        self.assertEqual((out.suffix, res["report"]["raw"], res["report"]["format"]), (".m4a", True, "m4a"))
+        self.assertEqual(stream_md5(out), stream_md5(src))          # نفس الصوت بالبايت: بدون أي تعديل
+        probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(out)],
+                               capture_output=True, text=True).stdout.split()
+        self.assertEqual(probe, ["audio"])                          # صوت فقط
+        self.assertFalse(list(d.glob("*_enhanced*")))
+        self.assertIsNone(res["original"])
+
+    def test_live_recording_aac_adts_becomes_m4a_without_reencoding(self):
+        src = Path(tempfile.mkdtemp()) / "Live (live) 2026.aac"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=330:d=5", "-c:a", "aac",
+                        "-b:a", "160k", "-f", "adts", str(src)], check=True)
+        res, d = self.run_raw(src, url="https://www.twitch.tv/somechannel")
+        self.assertTrue(res["output"].endswith(".m4a"))
+        self.assertEqual(decoded_md5(res["output"]), decoded_md5(src))
+        codec = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,bit_rate", "-of", "csv=p=0", res["output"]],
+                               capture_output=True, text=True).stdout.strip()
+        self.assertTrue(codec.startswith("aac"), codec)
+
+    def test_turning_the_switch_off_enhances_like_any_song(self):
+        src = Path(tempfile.mkdtemp()) / "t.mp3"
+        make_tone(src)
+        res, d = self.run_raw(src, twitch_raw=False)
+        self.assertTrue(res["output"].endswith("_enhanced.flac"))
+        self.assertFalse(res["report"].get("raw"))
+
+    def test_duplicate_names_get_a_number(self):
+        src = Path(tempfile.mkdtemp()) / "same.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=2", "-c:a", "aac", str(src)], check=True)
+        out = Path(tempfile.mkdtemp())
+
+        def fake_download(u, dest, cb, token=None, match_filter=None, live=False, info_cb=None):
+            shutil.copy(src, Path(dest) / "same.mp4")
+            return Path(dest) / "same.mp4", None
+        with mock.patch.object(core, "download", side_effect=fake_download):
+            a = core.process_item("https://www.twitch.tv/videos/1", {"out_dir": str(out)})
+            b = core.process_item("https://www.twitch.tv/videos/1", {"out_dir": str(out)})
+        self.assertEqual((Path(a["output"]).name, Path(b["output"]).name), ("same.m4a", "same (2).m4a"))
+
+
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
 class LongSources(unittest.TestCase):
     def test_twitch_long_lossless_request_becomes_opus_and_long_files_use_one_pass(self):
@@ -892,7 +965,7 @@ class LongSources(unittest.TestCase):
 
         with mock.patch.object(core, "download", side_effect=fake_download), \
                 mock.patch.object(core, "LONG_SOURCE_SECONDS", 60):
-            res = core.process_item("https://www.twitch.tv/videos/123", {"out_dir": str(d / "o"), "format": "flac"},
+            res = core.process_item("https://www.twitch.tv/videos/123", {"out_dir": str(d / "o"), "format": "flac", "twitch_raw": False},
                                     lambda s, f: stages.append(s))
         rep = res["report"]
         self.assertEqual((rep["format"], rep["format_note"], rep["twitch"]), ("opus", "twitch_opus", "vod"))

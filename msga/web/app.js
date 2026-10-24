@@ -108,6 +108,9 @@ const T = {
   rec_wait: ["🔴 يتصل بالبث…", "🔴 Connecting to the stream…"], rec_status: ["🔴 يسجّل البث المباشر… {mb} MB", "🔴 Recording the live stream… {mb} MB"],
   twitch_opus_note: ["حُفظ بصيغة Opus لأن البث طويل وصوته مضغوط أصلًا (يوفّر حجم كبير)", "Saved as Opus: the stream is long and its audio is already compressed (saves a lot of space)"],
   from_twitch: ["تويتش", "Twitch"],
+  raw_badge: ["أصلي بدون تعديل", "Original, untouched"],
+  twitch_raw_label: ["تويتش: صوت فقط بصيغته الأصلية", "Twitch: audio only, original format"],
+  twitch_raw_hint: ["يحفظ صوت البث (AAC) كما هو بدون تحسين ولا إعادة ترميز. لو طفيته يتحسّن مثل باقي الأغاني", "Saves the stream's audio (AAC) exactly as it is, with no enhancement or re-encoding. Turn off to enhance it like other songs"],
   from_src: ["المصدر: {c} · {t}", "Source: {c} · {t}"], not_this: ["مو هذي الأغنية", "Not this song"],
   trying_next: ["أجرّب نسخة ثانية…", "Trying another version…"],
   library: ["المكتبة", "Library"], lib_search: ["ابحث بالاسم أو الفنان…", "Search by title or artist…"],
@@ -446,7 +449,7 @@ function renderResult(c) {
   if (c.done && c.key === key) return;
   const wasPlaying = c.audio ? { t: c.audio.currentTime, paused: c.audio.paused, w: c.which } : null;
   c.key = key;
-  c.badge.hidden = false; c.badge.className = "badge q-" + r.quality; c.badge.textContent = t("q_" + r.quality);
+  c.badge.hidden = false; c.badge.className = "badge q-" + r.quality; c.badge.textContent = r.raw ? t("raw_badge") : t("q_" + r.quality);
   c.topBtns.innerHTML = "";
   c.topBtns.append(btn("tint mini-btn", "▶", () => playResult(it.id)));
   const chev = btn("chev", "", () => c.el.classList.toggle("open")); chev.title = t("details"); c.topBtns.append(chev);
@@ -460,8 +463,9 @@ function renderResult(c) {
     (it.cached ? t("cached_note") + "\n" : "") +
     (r.match ? t("from_src", { c: r.match.channel || "YouTube", t: r.match.title }) + "\n" : "") +
     (r.format_note === "twitch_opus" ? t("twitch_opus_note") + "\n" : "") +
-    `${msg(r.reason_key, r.reason_params)}\n${t("source")}: ${src}  ·  ${t("preset_used")}: ${used}\n` +
-    `${t("loudness")}: ${f1(r.lufs_before)} ← ${f1(r.lufs_after)} LUFS  ·  ${t("peak")}: ${f1(r.tp_before)} ← ${f1(r.tp_after)} dBTP`;
+    (r.raw ? `${msg(r.reason_key, r.reason_params)}\n${t("source")}: ${src}  ·  .${r.format}`
+      : `${msg(r.reason_key, r.reason_params)}\n${t("source")}: ${src}  ·  ${t("preset_used")}: ${used}\n` +
+        `${t("loudness")}: ${f1(r.lufs_before)} ← ${f1(r.lufs_after)} LUFS  ·  ${t("peak")}: ${f1(r.tp_before)} ← ${f1(r.tp_after)} dBTP`);
   const a = c.audio = c.res.querySelector("audio");
   const known = [r.lufs_before, r.lufs_after].filter(v => v !== null && v !== undefined);
   const target = known.length ? Math.min(...known) : null;
@@ -611,7 +615,7 @@ async function loadSettings() {
   setSeg("langSeg", S.lang); setSeg("themeSeg", S.cfg.theme);
   $("lightMode").checked = S.cfg.light; $("keepOrig").checked = S.cfg.keep_original; $("notifyOn").checked = S.cfg.notify;
   $("autoCheck").checked = S.cfg.auto_check; $("autoPlayer").checked = S.cfg.auto_player;
-  $("trimOn").checked = S.cfg.trim_silence; $("trayClose").checked = S.cfg.tray_close;
+  $("trimOn").checked = S.cfg.trim_silence; $("twitchRaw").checked = S.cfg.twitch_raw; $("trayClose").checked = S.cfg.tray_close;
   $("trayRow").hidden = !(S.state && S.state.platform === "win32" && S.state.mode === "window");
   $("outPath").value = S.cfg.out;
   $("watchOn").checked = S.cfg.watch_on; $("watchPath").value = S.cfg.watch || "";
@@ -624,6 +628,7 @@ bindSeg("themeSeg", async v => { await saveCfg({ theme: v }); applyTheme(); });
 $("keepOrig").onchange = e => saveCfg({ keep_original: e.target.checked });
 $("autoPlayer").onchange = e => saveCfg({ auto_player: e.target.checked });
 $("trimOn").onchange = e => saveCfg({ trim_silence: e.target.checked });
+$("twitchRaw").onchange = e => saveCfg({ twitch_raw: e.target.checked });
 $("trayClose").onchange = e => saveCfg({ tray_close: e.target.checked });
 $("logCopy").onclick = async () => {
   const text = await (await fetch("/api/log")).text();

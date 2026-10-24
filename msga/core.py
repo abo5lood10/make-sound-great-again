@@ -64,7 +64,7 @@ DEFAULT_CONFIG = {"preset": "auto", "format": "flac", "jobs": 1, "out": DEFAULT_
                   "bass": 0, "treble": 0, "notify": True, "auto_check": True,
                   "lufs": -14, "watch": "", "watch_on": False, "keep_original": False,
                   "auto_player": True, "start_player": False, "mini_corner": "bottom",
-                  "trim_silence": True, "tray_close": False, "eq": [0, 0, 0], "crossfade": 0}
+                  "trim_silence": True, "tray_close": False, "twitch_raw": True, "eq": [0, 0, 0], "crossfade": 0}
 LUFS_CHOICES = (0, -9, -11, -14, -16)  # 0 = بدون تطبيع
 
 # ملاحظة: كل النماذج تنتهي بتطبيع مستوى الصوت (مرحلتين) وlimiter عشان ما يصير تشويه.
@@ -182,6 +182,8 @@ MESSAGES = {
     "why_high_br": ("معدل بت عالي (\u2066{kbps} kbps\u2069)", "High bitrate (\u2066{kbps} kbps\u2069)"),
     "why_mid_br": ("جودة متوسطة (\u2066{kbps} kbps\u2069)", "Medium quality (\u2066{kbps} kbps\u2069)"),
     "why_mid": ("جودة متوسطة", "Medium quality"),
+    "why_raw": ("صوت فقط بصيغته الأصلية، منسوخ كما هو بدون أي تعديل أو إعادة ترميز",
+                "Audio only in its original format, copied as-is with no changes or re-encoding"),
 }
 
 
@@ -247,7 +249,7 @@ def sanitize_config(cfg):
     except (TypeError, ValueError):
         pass
     for key in ("light", "notify", "auto_check", "keep_original", "auto_player", "start_player", "trim_silence",
-                "tray_close"):
+                "tray_close", "twitch_raw"):
         if isinstance(cfg.get(key), bool):
             out[key] = cfg[key]
     if cfg.get("lufs") in LUFS_CHOICES:
@@ -831,6 +833,35 @@ LONG_SOURCE_SECONDS = 3600   # أطول من هذا: نحلل عينة، ونط�
 ENGINE_RETRY = ("err_dl", "err_format", "err_blocked", "err_signin", "err_unsupported")
 
 
+RAW_EXT = {"aac": "m4a", "mp3": "mp3", "opus": "opus", "vorbis": "ogg", "flac": "flac", "alac": "m4a", "ac3": "ac3"}
+
+
+def save_raw(src, info, out_dir, name, cb, token):
+    """يحفظ مسار الصوت فقط بصيغته الأصلية: نسخ مباشر (-c copy) بدون إعادة ترميز ولا أي فلتر. الجودة مطابقة للمصدر."""
+    ext = RAW_EXT.get(info["codec"], "mka")
+    stem = safe_stem(name or Path(src).stem)
+    n = 1
+    while True:
+        out = Path(out_dir) / (f"{stem}.{ext}" if n == 1 else f"{stem} ({n}).{ext}")
+        if not out.exists():
+            break
+        n += 1
+    cb("st_process", 0.35)
+    args = ["-i", str(src), "-vn", "-map", "0:a:0", "-c:a", "copy", "-map_metadata", "0"]
+    if ext == "m4a":
+        args += ["-movflags", "+faststart"]
+    run_ffmpeg([*args, str(out)], info["duration"] or None, sub(cb, "st_process", 0.35, 0.97), token)
+    cb("st_done", 1.0)
+    return {
+        "title": out.stem, "output": str(out), "original": None, "candidates": None,
+        "report": {"codec": info["codec"], "bitrate_kbps": round(info["bitrate"] / 1000) or None, "lossless": False,
+                   "hf_rel": None, "quality": "high", "reason": msg("why_raw", "ar"), "reason_key": "why_raw",
+                   "reason_params": {}, "preset": "raw", "auto": False, "lufs_before": None, "tp_before": None,
+                   "lufs_after": None, "tp_after": None, "lufs_target": None, "duration": info["duration"],
+                   "format": ext, "match": None, "format_note": None, "twitch": True, "raw": True},
+    }
+
+
 def process_item(source, opts, cb=lambda stage, frac: None):
     """
     source: رابط أو مسار ملف.
@@ -925,6 +956,8 @@ def process_item(source, opts, cb=lambda stage, frac: None):
                 raise EnhanceError("err_notfound", source=source)
 
         info = probe(src)
+        if tw and opts.get("twitch_raw", True):   # تويتش: صوت فقط بصيغته الأصلية، بدون تحسين
+            return save_raw(src, info, out_dir, opts.get("name"), cb, token)
         dur = info["duration"] or None
         fmt_note = None
         if tw and fmt in ("flac", "wav") and dur and dur > LONG_SOURCE_SECONDS // 2:
