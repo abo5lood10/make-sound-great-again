@@ -493,7 +493,7 @@ class SpotifyAndSources(unittest.TestCase):
             make_tone(Path(d) / "x.mp3")
             urls = []
 
-            def fake_download(url, dest, cb, token=None, match_filter=None):
+            def fake_download(url, dest, cb, token=None, match_filter=None, live=False, info_cb=None):
                 urls.append(url)
                 shutil.copy(Path(d) / "x.mp3", Path(dest) / f"x{len(urls)}.mp3")
                 core.download.last = {"channel": "Art - Topic" if url.endswith("a") else "Art",
@@ -779,7 +779,7 @@ class V15Features(unittest.TestCase):
         tone = Path(tempfile.mkdtemp()) / "t.mp3"
         make_tone(tone)
 
-        def fake_download(url, dest, cb, token=None, match_filter=None):
+        def fake_download(url, dest, cb, token=None, match_filter=None, live=False, info_cb=None):
             out = Path(dest) / f"dl_{url[-1]}.mp3"
             shutil.copy(tone, out)
             core.download.last = {"channel": "X" if url.endswith("a") else "X - Topic", "duration": "4"}
@@ -820,6 +820,85 @@ class V15Features(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertIn(updater.VERSION, text)
         self.assertIn("something happened", text)
+
+
+class TwitchSupport(unittest.TestCase):
+    def test_link_kinds(self):
+        k = core.twitch_kind
+        self.assertEqual(k("https://www.twitch.tv/videos/2908685525"), "vod")
+        self.assertEqual(k("https://www.twitch.tv/somechannel/video/123"), "vod")
+        self.assertEqual(k("https://www.twitch.tv/somechannel/clip/AbC-123_x"), "clip")
+        self.assertEqual(k("https://clips.twitch.tv/AbC-123"), "clip")
+        self.assertEqual(k("https://m.twitch.tv/somechannel"), "live")
+        self.assertEqual(k("https://www.twitch.tv/somechannel?sr=a"), "live")
+        for bad in ("https://www.twitch.tv/somechannel/videos", "https://www.twitch.tv/directory/game/Chess",
+                    "https://www.twitch.tv/videos", "https://www.twitch.tv/somechannel/clips"):
+            self.assertEqual(k(bad), "list", bad)
+        self.assertIsNone(k("https://www.youtube.com/watch?v=x"))
+        self.assertIsNone(k("https://nottwitch.tv/abc"))
+
+    def test_list_pages_are_refused_before_downloading(self):
+        with self.assertRaises(core.EnhanceError) as ctx:
+            core.process_item("https://www.twitch.tv/somechannel/videos", {"out_dir": tempfile.mkdtemp()})
+        self.assertEqual(ctx.exception.key, "err_twitch_list")
+
+    def test_error_translation(self):
+        t = core.translate_ytdlp_error
+        self.assertEqual(t("ERROR: [twitch:vod] 1: This video is only available for subscribers").key, "err_twitch_sub")
+        self.assertEqual(t("ERROR: [twitch:stream] x: The channel is not currently live").key, "err_twitch_offline")
+        self.assertEqual(t("ERROR: [twitch:vod] 1: Video 1 does not exist").key, "err_unavail")
+
+    @unittest.skipIf(os.name == "nt", "posix process groups")
+    def test_stop_kills_the_whole_process_tree_but_cancel_still_raises(self):
+        # أب يشغّل ابن (مثل yt-dlp مع ffmpeg): الإيقاف لازم يقتل الاثنين
+        cmd = [sys.executable, "-c", "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); time.sleep(60)"]
+        tok = core.CancelToken()
+        p = core.popen(cmd, tok, tree=True)
+        time.sleep(1)
+        tok.stop()
+        p.wait(timeout=10)
+        self.assertTrue(tok.stopped)
+        tok.check()   # الإيقاف والحفظ ما يرمي خطأ إلغاء
+        tok2 = core.CancelToken()
+        tok2.cancel()
+        with self.assertRaises(core.EnhanceError):
+            tok2.check()
+
+    def test_live_item_flags_and_stop_endpoint(self):
+        it = server.STATE.new_item("https://www.twitch.tv/somechannel", "url", source="https://www.twitch.tv/somechannel",
+                                   opts={}, req={}, src_url="x")
+        self.assertTrue(it["live"])
+        self.assertFalse(server.public(it)["can_stop"])           # ما بدأ التسجيل
+        it["status"] = "running"
+        self.assertTrue(server.public(it)["can_stop"])
+        it["status"] = "done"
+        vod = server.STATE.new_item("https://www.twitch.tv/videos/1", "url", source="https://www.twitch.tv/videos/1",
+                                    opts={}, req={}, src_url="y")
+        self.assertFalse(vod["live"])
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+class LongSources(unittest.TestCase):
+    def test_twitch_long_lossless_request_becomes_opus_and_long_files_use_one_pass(self):
+        d = Path(tempfile.mkdtemp())
+        src = d / "stream.mp3"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=300:d=80:r=16000",
+                        "-c:a", "libmp3lame", "-b:a", "16k", str(src)], check=True)
+        stages = []
+
+        def fake_download(url, dest, cb, token=None, match_filter=None, live=False, info_cb=None):
+            shutil.copy(src, Path(dest) / "stream.mp3")
+            return Path(dest) / "stream.mp3", None
+
+        with mock.patch.object(core, "download", side_effect=fake_download), \
+                mock.patch.object(core, "LONG_SOURCE_SECONDS", 60):
+            res = core.process_item("https://www.twitch.tv/videos/123", {"out_dir": str(d / "o"), "format": "flac"},
+                                    lambda s, f: stages.append(s))
+        rep = res["report"]
+        self.assertEqual((rep["format"], rep["format_note"], rep["twitch"]), ("opus", "twitch_opus", "vod"))
+        self.assertTrue(res["output"].endswith(".opus"))
+        self.assertNotIn("st_measure", stages)          # ملف أطول من ساعة: بدون مرحلة القياس
+        self.assertLess(rep["lufs_after"] - (-14), 3.0)
 
 
 class Startup(unittest.TestCase):

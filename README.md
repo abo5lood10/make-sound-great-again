@@ -31,6 +31,7 @@ Works on **Windows, macOS and Linux**. Arabic and English interface, light and d
 - **Synced lyrics** (from the free, open LRCLIB database), a **live EQ** (bass / mids / treble) and **crossfade** in the player.
 - **Library**: every song in your output folder with search, sorting, duplicate detection, play / add to queue, and delete (to the Recycle Bin).
 - **Trim silence** at the start and end (true silence only), and **Copy log** in Settings for reporting problems.
+- **Twitch** (paste the link): past broadcasts (VODs), clips, and **live streams**. Always **audio only** (the stream's 160 kbps audio track, never the video), then enhanced and saved like any other song. For a live stream the card shows a red "Recording…" counter with a **Stop & save** button: whatever was recorded so far is enhanced and saved (the recording is plain AAC, so it survives being stopped at any moment). Very long broadcasts are handled efficiently (loudness analysis on a sample, one-pass levelling), and a long Twitch broadcast requested as FLAC/WAV is saved as Opus instead, because its audio is already compressed and lossless would only make the file ~5x bigger. Channel / list pages are refused with a clear message (paste a single VOD or clip). Subscriber-only broadcasts can't be downloaded.
 - **Built-in player**: open files or a folder from your computer and it plays everything in order, with previous / next, seek, volume, shuffle and repeat. Plays **every format** (formats the system can't play natively are converted on the fly with ffmpeg) and **videos play their audio only**.
 - **Choose files or a whole folder** from the system dialog: songs are processed in place (your originals are never copied or moved), videos are turned into audio.
 - **Watch a folder**: new songs dropped into it are enhanced automatically (existing files are left alone).
@@ -126,6 +127,6 @@ CI runs the tests on Windows, macOS and Linux for every push.
 
 ## Legal
 
-Download only what you have the right to use. You are responsible for how you use this tool and for respecting the terms of the sites and the copyright of the content.
+Download only what you have the right to use (this includes streamers' broadcasts: respect their rights and Twitch's terms). You are responsible for how you use this tool and for respecting the terms of the sites and the copyright of the content.
 
 MIT licensed (see `LICENSE`).

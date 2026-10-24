@@ -6,8 +6,8 @@ const T = {
   subtitle: ["حسّن جودة أي أغنية من رابط أو ملف", "Improve any song from a link or a file"],
   url_placeholder: ["الصق رابط (يوتيوب، تيكتوك، انستا، سبوتيفاي…) أو اكتب اسم الأغنية مثل: محمد عبده - الأماكن (سطر لكل وحدة)",
                     "Paste a link (YouTube, TikTok, Instagram, Spotify…) or type a song name like: Artist - Title (one per line)"],
-  url_hint: ["يوتيوب · تيكتوك · ساوندكلاود · انستا · سبوتيفاي (أغنية / ألبوم / قائمة). قوائم التشغيل تُكتشف تلقائيًا. سبوتيفاي: البرنامج يلقى الأغنية في يوتيوب وينزّلها (صوت سبوتيفاي نفسه محمي).",
-             "YouTube · TikTok · SoundCloud · Instagram · Spotify (song / album / playlist). Playlists are detected automatically. Spotify: the app finds each song on YouTube and downloads it (Spotify's own audio is protected)."],
+  url_hint: ["يوتيوب · تيكتوك · ساوندكلاود · انستا · سبوتيفاي · تويتش (تسجيلات ومقاطع وبث مباشر). قوائم التشغيل تُكتشف تلقائيًا. سبوتيفاي: البرنامج يلقى الأغنية في يوتيوب وينزّلها. تويتش: صوت فقط، وللبث المباشر يظهر زر «إيقاف وحفظ».",
+             "YouTube · TikTok · SoundCloud · Instagram · Spotify · Twitch (past broadcasts, clips and live streams). Playlists are detected automatically. Spotify: the app finds each song on YouTube. Twitch: audio only, and live streams get a “Stop & save” button."],
   paste_link: ["📋 لصق رابط من الحافظة", "📋 Paste link from clipboard"],
   paste_hint: ["اضغط Ctrl+V داخل المربع", "Press Ctrl+V inside the box"],
   drop_title: ["اسحب ملفات الأغاني هنا", "Drop song files here"],
@@ -104,7 +104,10 @@ const T = {
   pl_formats: ["كل الصيغ مدعومة، والفيديو يُشغَّل صوته فقط", "All formats work; videos play audio only"],
   pl_preparing: ["جاري التجهيز…", "Preparing…"], pl_failed: ["تعذّر تشغيل هذا الملف", "Couldn't play this file"],
   pl_nothing: ["لا شي يُشغَّل", "Nothing playing"], play_here: ["▶ شغّل بالمشغّل", "▶ Play in the player"],
-  url_or_name: ["", ""],
+  stop_rec: ["⏹ إيقاف وحفظ", "⏹ Stop & save"],
+  rec_wait: ["🔴 يتصل بالبث…", "🔴 Connecting to the stream…"], rec_status: ["🔴 يسجّل البث المباشر… {mb} MB", "🔴 Recording the live stream… {mb} MB"],
+  twitch_opus_note: ["حُفظ بصيغة Opus لأن البث طويل وصوته مضغوط أصلًا (يوفّر حجم كبير)", "Saved as Opus: the stream is long and its audio is already compressed (saves a lot of space)"],
+  from_twitch: ["تويتش", "Twitch"],
   from_src: ["المصدر: {c} · {t}", "Source: {c} · {t}"], not_this: ["مو هذي الأغنية", "Not this song"],
   trying_next: ["أجرّب نسخة ثانية…", "Trying another version…"],
   library: ["المكتبة", "Library"], lib_search: ["ابحث بالاسم أو الفنان…", "Search by title or artist…"],
@@ -422,11 +425,19 @@ function refreshCard(id) {
   c.track.hidden = done; c.stage.hidden = done;
   c.bar.style.width = it.pct + "%";
   c.track.classList.toggle("fail", error);
-  c.stage.textContent = error ? t("failed") : canc ? t("cancelled") : it.status === "waiting" ? t("waiting") : `${stageText(it.stage_key)} · ${it.pct}%`;
+  c.stage.textContent = error ? t("failed") : canc ? t("cancelled") : it.status === "waiting" ? t("waiting")
+    : it.live && it.stage_key === "st_record" ? (it.rec_bytes ? t("rec_status", { mb: (it.rec_bytes / 1048576).toFixed(1) }) : t("rec_wait"))
+    : `${stageText(it.stage_key)} · ${it.pct}%`;
+  if (it.live && it.status === "running" && it.stage_key === "st_record") c.bar.style.width = "100%";
   c.err.textContent = error ? errText(it.error) : "";
-  c.actions.innerHTML = "";
-  if (it.status === "waiting" || it.status === "running") c.actions.append(btn("link", t("cancel"), () => api("/api/cancel", { id: it.id })));
-  if ((error || canc) && it.can_retry) c.actions.append(btn("tint", t("retry"), () => api("/api/retry", { id: it.id }).then(poll)));
+  const actKey = [it.status, it.can_stop, it.can_retry, canc, S.lang].join("|");
+  if (c.actKey !== actKey) {   // نعيد بناء الأزرار فقط لما تتغير حالتها (وإلا الضغطة ممكن تضيع مع التحديث الدوري)
+    c.actKey = actKey;
+    c.actions.innerHTML = "";
+    if (it.can_stop) c.actions.append(btn("tint", t("stop_rec"), () => api("/api/stop", { id: it.id })));
+    if (it.status === "waiting" || it.status === "running") c.actions.append(btn("link", t("cancel"), () => api("/api/cancel", { id: it.id })));
+    if ((error || canc) && it.can_retry) c.actions.append(btn("tint", t("retry"), () => api("/api/retry", { id: it.id }).then(poll)));
+  }
   if (done) { renderResult(c); } else { c.badge.hidden = true; c.res.innerHTML = ""; c.topBtns.innerHTML = ""; c.done = false; c.audio = null; }
 }
 function renderResult(c) {
@@ -448,6 +459,7 @@ function renderResult(c) {
   c.res.querySelector(".meta").textContent =
     (it.cached ? t("cached_note") + "\n" : "") +
     (r.match ? t("from_src", { c: r.match.channel || "YouTube", t: r.match.title }) + "\n" : "") +
+    (r.format_note === "twitch_opus" ? t("twitch_opus_note") + "\n" : "") +
     `${msg(r.reason_key, r.reason_params)}\n${t("source")}: ${src}  ·  ${t("preset_used")}: ${used}\n` +
     `${t("loudness")}: ${f1(r.lufs_before)} ← ${f1(r.lufs_after)} LUFS  ·  ${t("peak")}: ${f1(r.tp_before)} ← ${f1(r.tp_after)} dBTP`;
   const a = c.audio = c.res.querySelector("audio");

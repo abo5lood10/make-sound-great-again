@@ -166,6 +166,12 @@ MESSAGES = {
     "err_nomatch": ("ما لقيت هذي الأغنية في يوتيوب", "Couldn't find this song on YouTube"),
     "err_spotify": ("تعذّر قراءة رابط سبوتيفاي (تأكد إنه رابط أغنية أو ألبوم أو قائمة عامة)",
                     "Couldn't read this Spotify link (it must be a public song, album or playlist)"),
+    "err_twitch_sub": ("هذا التسجيل للمشتركين في القناة فقط (Subscriber-only)", "This broadcast is for channel subscribers only"),
+    "err_twitch_offline": ("القناة مو مباشرة الحين. الصق رابط تسجيل (VOD) أو مقطع (Clip) من صفحتها",
+                           "The channel isn't live right now. Paste a past broadcast (VOD) or clip link from its page"),
+    "err_twitch_list": ("هذا رابط صفحة قنوات/تسجيلات وليس تسجيل واحد. افتح التسجيل أو المقطع اللي تبيه والصق رابطه",
+                        "This is a channel/list page, not a single broadcast. Open the VOD or clip you want and paste its link"),
+    "st_record": ("تسجيل البث المباشر", "Recording the live stream"),
     "err_cancelled": ("تم الإلغاء", "Cancelled"),
     "err_notfound": ("ما لقيت الملف: {source}", "File not found: {source}"),
     # أسباب تقدير الجودة
@@ -325,35 +331,61 @@ def _popen_kwargs():
     return kw
 
 
+def kill_tree(p):
+    """يوقف العملية مع كل عملياتها الفرعية (yt-dlp يشغّل ffmpeg للبث المباشر، وبدون هذا يبقى يسجّل بالخلفية)."""
+    try:
+        if p.poll() is not None:
+            return
+        if IS_WIN:
+            subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True, creationflags=0x08000000)
+        elif getattr(p, "msga_tree", False):
+            import signal
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        else:
+            p.terminate()
+    except (OSError, ProcessLookupError, subprocess.SubprocessError):
+        try:
+            p.terminate()
+        except OSError:
+            pass
+
+
 class CancelToken:
     """رمز إلغاء: cancel() يوقف العمليات الشغّالة لهذي المهمة."""
 
     def __init__(self):
         self._event = threading.Event()
         self.procs = []
+        self.stopped = False   # «إيقاف وحفظ»: نوقف التنزيل (بث مباشر) ونكمل بالمعالجة بما تم تسجيله
 
     def is_set(self):
         return self._event.is_set()
 
+    def stop(self):
+        self.stopped = True
+        for p in list(self.procs):
+            kill_tree(p)
+
     def cancel(self):
         self._event.set()
         for p in list(self.procs):
-            try:
-                p.terminate()
-            except OSError:
-                pass
+            kill_tree(p)
 
     def check(self):
         if self._event.is_set():
             raise EnhanceError("err_cancelled")
 
 
-def popen(cmd, token=None, **kw):
+def popen(cmd, token=None, tree=False, **kw):
+    """tree=True: العملية تبدأ بمجموعة خاصة (Linux/Mac) عشان نقدر نوقفها مع كل أبنائها."""
+    if tree and not IS_WIN:
+        kw["start_new_session"] = True
     p = subprocess.Popen(_wrap(cmd), encoding="utf-8", errors="replace", **{**_popen_kwargs(), **kw})
+    p.msga_tree = bool(tree and not IS_WIN)
     if token is not None:
         token.procs.append(p)
         if token.is_set():
-            p.terminate()
+            kill_tree(p)
     return p
 
 
@@ -366,6 +398,32 @@ def run(cmd, **kw):
 
 def is_url(s):
     return str(s).startswith(("http://", "https://"))
+
+
+_TW = re.compile(r"^https?://(?:(?:www|m|go|player)\.)?twitch\.tv/([^/?#]+)(?:/([^?#]*))?", re.I)
+_TW_LIST = {"directory", "videos", "clips", "schedule", "about", "following", "settings", "subscriptions", "wallet", "drops",
+            "downloads", "turbo", "friends", "inventory", "jobs", "p", "popout", "embed"}
+
+
+def twitch_kind(url):
+    """نوع رابط تويتش: vod (تسجيل) | clip (مقطع) | live (قناة: بث مباشر) | list (صفحة قنوات/قوائم) | None (مو تويتش)."""
+    u = str(url)
+    if re.match(r"^https?://clips\.twitch\.tv/[^/?#]+", u, re.I):
+        return "clip"
+    m = _TW.match(u)
+    if not m:
+        return None
+    first, rest = m.group(1).lower(), (m.group(2) or "").strip("/").lower()
+    if first == "videos":
+        return "vod" if rest else "list"
+    if first in _TW_LIST:
+        return "list"
+    parts = rest.split("/")
+    if parts[0] in ("clip",):
+        return "clip" if len(parts) > 1 and parts[1] else "list"
+    if parts[0] in ("video", "v", "videos"):
+        return "vod" if len(parts) > 1 and parts[1] else "list"
+    return "live" if not rest else "list"
 
 
 def is_remote(s):
@@ -400,8 +458,10 @@ def translate_ytdlp_error(text):
     """يحوّل مخرجات yt-dlp إلى EnhanceError برسالة مفهومة."""
     t = text.lower()
     rules = [
+        (("subscriber", "subscribers only", "sub-only"), "err_twitch_sub"),
+        (("not currently live", "is offline"), "err_twitch_offline"),
         (("private video", "this video is private"), "err_private"),
-        (("video unavailable", "has been removed", "no longer available", "deleted"), "err_unavail"),
+        (("video unavailable", "has been removed", "no longer available", "deleted", "does not exist"), "err_unavail"),
         (("sign in", "confirm you", "not a bot", "login required", "age-restricted", "age restricted"), "err_signin"),
         (("unsupported url",), "err_unsupported"),
         (("http error 404", "not found"), "err_404"),
@@ -528,15 +588,67 @@ def rank_candidates(cands, title, artist="", duration=None):
     return sorted(cands, key=lambda c: score_candidate(c, title, artist, duration), reverse=True)
 
 
-def download(url, dest, cb, token=None, match_filter=None):
+def _twitch_audio_variant(master_url):
+    """من قائمة البث الرئيسية: رابط نسخة الصوت فقط (audio_only) بدل ما ffmpeg يختار الفيديو."""
+    try:
+        text = http_get(master_url, timeout=20).decode("utf-8", "replace")
+    except Exception:
+        return None
+    lines = text.splitlines()
+    best = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("#EXT-X-STREAM-INF"):
+            nxt = next((x for x in lines[i + 1:] if x.strip() and not x.startswith("#")), None)
+            if nxt and ("audio_only" in ln.lower() or ("RESOLUTION" not in ln and "avc1" not in ln)):
+                best = nxt.strip()
+                break
+    return best
+
+
+def _record_live(url, dest, cb, token, info_cb):
+    """يسجّل بث مباشر (تويتش) صوت فقط، مباشرة بـ ffmpeg بصيغة AAC (ما تنكسر لو انقطع التسجيل)."""
+    r = run([*ytdlp_cmd(), "--no-warnings", "--encoding", "utf-8", "-f", "audio_only/bestaudio/worst",
+             "--print", "%(title).120B", "--print", "%(urls)s", url])
+    if r.returncode != 0:
+        raise translate_ytdlp_error(r.stderr)
+    lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        raise EnhanceError("err_nofile")
+    title, master = lines[0], lines[-1]
+    source = _twitch_audio_variant(master) or master
+    out = Path(dest) / (safe_stem(title) + ".aac")
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostdin", "-reconnect", "1", "-reconnect_streamed", "1",
+           "-reconnect_delay_max", "5", "-i", source, "-vn", "-map", "0:a:0", "-c:a", "copy", "-f", "adts", str(out)]
+    with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
+        p = popen(cmd, token, tree=True, stdout=subprocess.DEVNULL, stderr=err)
+        while p.poll() is None:
+            if info_cb and out.exists():
+                info_cb({"bytes": out.stat().st_size})
+            time.sleep(1)
+        p.wait()
+        err.seek(0)
+        errtext = err.read()
+    if token is not None and not token.stopped:
+        token.check()
+    if not out.exists() or out.stat().st_size < 4096:
+        raise translate_ytdlp_error(errtext) if errtext.strip() else EnhanceError("err_nofile")
+    download.last = {"channel": "", "duration": ""}
+    return out, None
+
+
+def download(url, dest, cb, token=None, match_filter=None, live=False, info_cb=None):
     """ينزّل أعلى جودة صوت بالصيغة الأصلية (بدون تحويل) مع الغلاف والبيانات. يرجع (الملف، الغلاف|None)."""
+    if live:
+        return _record_live(url, dest, cb, token, info_cb)
     cmd = [
         *ytdlp_cmd(), "--no-playlist", "-f", "bestaudio/best", "--encoding", "utf-8",
         "--embed-metadata", "--write-thumbnail", "--convert-thumbnails", "jpg",
-        "--newline", "--progress-template", "download:%(progress._percent_str)s",
+        "--newline", "--progress-template", "download:%(progress._percent_str)s|%(progress.downloaded_bytes)s",
         "-o", str(Path(dest) / "%(title).120B.%(ext)s"),
         "--print", "after_move:MSGA\t%(channel)s\t%(duration)s\t%(filepath)s", "--no-simulate", "--no-warnings",
     ]
+    if twitch_kind(url):
+        cmd += ["--concurrent-fragments", "4", "--retries", "10", "--fragment-retries", "10"]
     searching = str(url).startswith("ytsearch")
     if searching:  # أغاني سبوتيفاي: نأخذ أول نتيجة تنطبق عليها الشروط
         cmd += ["--max-downloads", "1"]
@@ -546,12 +658,16 @@ def download(url, dest, cb, token=None, match_filter=None):
     filepath = None
     info_out = download.last = {}
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err:
-        p = popen(cmd, token, stdout=subprocess.PIPE, stderr=err)
+        p = popen(cmd, token, tree=True, stdout=subprocess.PIPE, stderr=err)
         for line in p.stdout:
             line = line.strip()
-            m = re.match(r"download:\s*([\d.]+)%", line)
+            m = re.match(r"download:\s*([^|]*)\|(\d*)", line)
             if m:
-                cb(float(m.group(1)) / 100)
+                pm = re.match(r"\s*([\d.]+)%", m.group(1))
+                if pm:
+                    cb(float(pm.group(1)) / 100)
+                if info_cb and m.group(2):
+                    info_cb({"bytes": int(m.group(2))})
             elif line.startswith("MSGA\t"):
                 parts = line.split("\t", 3)
                 if len(parts) == 4:
@@ -561,9 +677,15 @@ def download(url, dest, cb, token=None, match_filter=None):
         p.stdout.close()
         err.seek(0)
         errtext = err.read()
-    if token is not None:
+    if token is not None and not token.stopped:
         token.check()
-    if p.returncode not in (0, 101):  # 101 = وصلنا حد --max-downloads (نجاح)
+    if token is not None and token.stopped and not token.is_set():
+        # «إيقاف وحفظ» لبث مباشر: نأخذ أكبر ملف وسائط انكتب في المجلد
+        files = [f for f in Path(dest).iterdir() if f.is_file() and f.suffix.lower() not in (".jpg", ".webp", ".png", ".ytdl", ".part")]
+        if not files:
+            raise EnhanceError("err_nofile")
+        filepath = str(max(files, key=lambda f: f.stat().st_size))
+    elif p.returncode not in (0, 101):  # 101 = وصلنا حد --max-downloads (نجاح)
         raise translate_ytdlp_error(errtext)
     if not filepath or not Path(filepath).exists():
         raise EnhanceError("err_nomatch" if searching else "err_nofile")
@@ -650,13 +772,16 @@ def probe(path):
     }
 
 
-def analyze(path, duration, cb, token=None):
+def analyze(path, duration, cb, token=None, limit=None):
     """مرور واحد: مستوى الصوت (LUFS) + وجود ترددات فوق 16kHz."""
     fc = ("[0:a]asplit=3[a][b][c];"
           f"[a]{LOUDNORM}:print_format=json[o1];"
           "[b]volumedetect[o2];"
           "[c]highpass=f=16000,volumedetect[o3]")
-    text = run_ffmpeg(["-i", str(path), "-filter_complex", fc,
+    pre = ["-t", str(limit)] if limit else []
+    if limit and duration:
+        duration = min(duration, limit)
+    text = run_ffmpeg([*pre, "-i", str(path), "-filter_complex", fc,
                        "-map", "[o1]", "-f", "null", "-",
                        "-map", "[o2]", "-f", "null", "-",
                        "-map", "[o3]", "-f", "null", "-"], duration, cb, token)
@@ -702,6 +827,7 @@ def set_engine_updater(fn):
     _engine_updater = fn
 
 
+LONG_SOURCE_SECONDS = 3600   # أطول من هذا: نحلل عينة، ونطبّع بمرحلة وحدة (والتويتش: lossless يتحول Opus فوق نصفه)
 ENGINE_RETRY = ("err_dl", "err_format", "err_blocked", "err_signin", "err_unsupported")
 
 
@@ -713,6 +839,9 @@ def process_item(source, opts, cb=lambda stage, frac: None):
     cb(stage_key, frac): تقدّم عام من 0 إلى 1 (stage_key مفتاح في MESSAGES).
     """
     remote = is_remote(source)
+    tw = twitch_kind(source) if is_url(source) else None
+    if tw == "list":
+        raise EnhanceError("err_twitch_list")
     check_tools(need_download=remote)
     set_light(opts.get("light", True))
     preset_opt = opts.get("preset", "auto")
@@ -756,7 +885,10 @@ def process_item(source, opts, cb=lambda stage, frac: None):
             def fetch():
                 nonlocal dl_url, match
                 for attempt in range(3):
-                    got = download(dl_url, tmp, sub(cb, "st_download", 0.0, 0.3), token)
+                    if tw == "live":
+                        cb("st_record", 0.15)
+                    got = download(dl_url, tmp, sub(cb, "st_download", 0.0, 0.3), token, None, tw == "live",
+                                   opts.get("progress_info"))
                     last = getattr(download, "last", None)
                     info_dl = last if isinstance(last, dict) else {}
                     if match is not None:
@@ -794,6 +926,11 @@ def process_item(source, opts, cb=lambda stage, frac: None):
 
         info = probe(src)
         dur = info["duration"] or None
+        fmt_note = None
+        if tw and fmt in ("flac", "wav") and dur and dur > LONG_SOURCE_SECONDS // 2:
+            # صوت تويتش أصلًا مضغوط (AAC)، فالـ FLAC/WAV لبث ساعات بس يضخّم الحجم 5 مرات بدون فايدة
+            fmt, fmt_note = "opus", "twitch_opus"
+        long_src = bool(dur and dur > LONG_SOURCE_SECONDS)   # ملف طويل: نحلل عينة 10 دقايق، ونطبّع بمرحلة وحدة (أسرع بكثير)
         if cover is None and info["cover_idx"] is not None:
             cover = extract_cover(src, info["cover_idx"], tmp)
 
@@ -803,7 +940,7 @@ def process_item(source, opts, cb=lambda stage, frac: None):
             return base + span * x
 
         cb("st_analyze", t(0.0))
-        an = analyze(src, dur, sub(cb, "st_analyze", t(0.0), t(0.12)), token)
+        an = analyze(src, dur, sub(cb, "st_analyze", t(0.0), t(0.12)), token, limit=600 if long_src else None)
         quality, (reason_key, reason_params) = classify(info, an["hf_rel"])
         auto = preset_opt == "auto"
         preset = AUTO_MAP[quality] if auto else preset_opt
@@ -821,7 +958,9 @@ def process_item(source, opts, cb=lambda stage, frac: None):
                     raise EnhanceError("err_model", name=name)
             cwd = str(MODELS_DIR)
 
-        if ln:
+        if ln and long_src:  # بدون مرحلة قياس: تطبيع ديناميكي بمرحلة وحدة
+            final_chain = f"{chain},{ln}:print_format=json,alimiter=limit=0.95"
+        elif ln:
             # المرحلة 1: قياس بعد الفلاتر عشان التطبيع يكون دقيق
             m = parse_loudnorm_json(run_ffmpeg(
                 ["-i", str(src), "-vn", "-af", f"{chain},{ln}:print_format=json", "-f", "null", "-"],
@@ -890,6 +1029,7 @@ def process_item(source, opts, cb=lambda stage, frac: None):
             "tp_after": after.get("output_tp") if ln else after.get("input_tp"),
             "lufs_target": lufs or None, "duration": info["duration"], "format": fmt,
             "match": {k: match[k] for k in ("title", "channel", "url", "pick", "count")} if match else None,
+            "format_note": fmt_note, "twitch": tw,
         },
         "candidates": opts.get("candidates"),
     }

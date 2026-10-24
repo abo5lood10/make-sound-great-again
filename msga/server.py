@@ -78,6 +78,7 @@ class State:
     def new_item(self, label, kind, source=None, opts=None, req=None, src_url=None):
         it = {"id": uuid.uuid4().hex[:10], "label": label, "kind": kind, "status": "waiting",
               "stage_key": None, "pct": 0, "error": None, "result": None, "cached": False,
+              "live": core.twitch_kind(source) == "live" if source else False, "rec_bytes": 0,
               "_source": source, "_opts": opts, "_req": req, "_src": src_url, "_token": core.CancelToken(),
               "_future": None, "_paths": {}, "_cleanup": None}
         with self.lock:
@@ -101,6 +102,7 @@ def public(it):
     o = it.get("_opts") or {}
     d["can_next"] = bool(it["status"] == "done" and str(it.get("_source") or "").startswith("ytsearch")
                          and o.get("candidates") and int(o.get("pick", 0)) + 1 < len(o["candidates"]))
+    d["can_stop"] = bool(it["status"] == "running" and it.get("live"))
     d["can_tags"] = bool(it["_paths"].get("e") and Path(it["_paths"]["e"]).exists())
     d["can_retry"] = bool(it["status"] in ("error", "cancelled") and it["_source"]
                           and (it["kind"] != "file" or Path(it["_source"]).is_file()))
@@ -226,7 +228,7 @@ def run_item(it):
         it.update(status="cancelled", error=None)
         return
     it.update(status="running", error=None, pct=0, stage_key=None)
-    opts = dict(it["_opts"], token=token)
+    opts = dict(it["_opts"], token=token, progress_info=lambda d: it.update(rec_bytes=d.get("bytes", 0)))
     try:
         res = core.process_item(it["_source"], opts, cb)
         r = res["report"]
@@ -708,7 +710,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/pick": self._pick, "/api/submit_paths": self._submit_paths, "/api/tags": self._set_tags,
             "/api/player/open": self._player_open, "/api/player/paths": self._player_paths,
             "/api/player/add_item": self._player_add_item, "/api/player/clear": self._player_clear,
-            "/api/window/mode": self._window_mode, "/api/next_match": self._next_match,
+            "/api/window/mode": self._window_mode, "/api/next_match": self._next_match, "/api/stop": self._stop,
             "/api/player/save": self._player_save, "/api/library/delete": self._library_delete,
             "/api/library/play": self._library_play,
         }
@@ -791,7 +793,17 @@ class Handler(BaseHTTPRequestHandler):
         submit_item(new, core.auto_jobs())
         self._json({"ok": True})
 
+    def _stop(self, d):
+        """«إيقاف وحفظ» لبث مباشر: يوقف التسجيل ويكمل معالجة اللي انسجّل."""
+        it = STATE.find(d.get("id", ""))
+        if not it or it["status"] != "running":
+            return self._json({"ok": False})
+        it["_token"].stop()
+        self._json({"ok": True})
+
     def _cached(self, url, req):
+        if core.twitch_kind(url) == "live":
+            return None
         with STATE.lock:
             for i in reversed(STATE.items):
                 if (i["status"] == "done" and i["_src"] == url and i["_req"] == req
